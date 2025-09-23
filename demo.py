@@ -11,6 +11,8 @@ for i in who:
 # msgs = wx.GetAllMessage(savepic=True)
 # for msg in msgs:
 #     print(f"{msg[0]}: {msg[1]}")
-
+#第二次测试
+for i in who:
+    wx.SendMsg('hello again', i)
 
 print('wxauto测试完成!')
