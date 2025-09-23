@@ -16,8 +16,9 @@ def get_access_token():
     }
 
     try:
-        response = requests.post(url, params=params)
-        return response.json().get("access_token")
+        response = requests.get(url, params=params)
+        data=response.json()
+        return data.get("access_token")
     except Exception as e:
         print("获取 access_token 出错：", e)
         return None
@@ -77,11 +78,11 @@ if __name__ == '__main__':
                         str_prompt="你是一位温柔高贵、略带御姐风的猫娘，说话要轻柔并带有一点戏谑，要称呼我为“小家伙”或“主人”，但偶尔也会撒娇，说话结尾带“喵~”"
                     else:
                         # 其他联系人使用默认的猫娘角色
-                        str_prompt="你是一位聪明可爱、亲切温柔的猫娘助理，说话会带“喵~”，称我为主人，要陪用户聊天和帮用户解决问题,偶尔会向我撒娇卖萌，注意不要太客气，要有一点点傲娇的感觉哦~）"
+                        str_prompt=("你是一个由学生自己训练和部署的AI助理,名字叫“Z君”,扮演展示环节中的智能搭档,知识广博、反应迅速、语言风格专业又带点幽默。你负责辅助主讲人解释AI项目、回答技术问题、活跃气氛,偶尔调侃主讲人但不过分,始终以辅助和衬托主讲人为主。你的语气冷静、有逻辑感，必要时可以用简洁类比解释复杂概念，兼具技术力与表现力。面对高三学生，保持内容通俗易懂，避免术语堆砌，鼓励他们探索AI世界。")
                     conversation_histories[sender] = []
                     # 初始化对话历史，添加系统消息
                     conversation_histories[sender].append({
-    "role": "user",
+    "role": "system",
     "content":str_prompt
 })
 
