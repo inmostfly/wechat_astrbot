@@ -14,5 +14,6 @@ for i in who:
 #第二次测试
 for i in who:
     wx.SendMsg('hello again', i)
+    a+=1
 
 print('wxauto测试完成!')
