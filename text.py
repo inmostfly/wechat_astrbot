@@ -1,3 +1,4 @@
+import os
 import requests
 import json
 import time
@@ -8,11 +9,16 @@ def get_access_token():
     """
     使用 API Key, Secret Key 获取 access_token
     """
+    client_id = os.getenv("BAIDU_CLIENT_ID")
+    client_secret = os.getenv("BAIDU_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise RuntimeError("Missing BAIDU_CLIENT_ID or BAIDU_CLIENT_SECRET environment variable")
+
     url = "https://aip.baidubce.com/oauth/2.0/token"
     params = {
         'grant_type': 'client_credentials',
-        'client_id': 'f5gDoj6lFfL7e6P0NXa0t72t',
-        'client_secret': '2qOdVHaIQtqYBMX1vzxitxGLbnLp2sLE'
+        'client_id': client_id,
+        'client_secret': client_secret
     }
 
     try:

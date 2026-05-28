@@ -1,12 +1,17 @@
+import os
 import requests
 import json
 from openai import OpenAI
-{
-#通过http协议直接获得回答
+
+API_KEY = os.getenv("API_KEY")
+API_URL = os.getenv("API_URL", "https://api2.aigcbest.top/v1")
+if not API_KEY:
+    raise RuntimeError("Missing API_KEY environment variable")
+
+# 通过 http 协议直接获得回答
 # url="https://api2.aigcbest.top/v1/chat/completions"
-# api_key="sk-w2CdZvyZH1GiPRNEc1ZwMw7g16Gg28Lat6I5dHJLXJ3WuiXW"
 # headers={
-#     "Authorization":f"Bearer {api_key}",
+#     "Authorization":f"Bearer {API_KEY}",
 #     "Content-Type":"application/json"
 # }
 # data = {
@@ -16,11 +21,11 @@ from openai import OpenAI
 #     ]
 # }
 # response=requests.post(url,headers=headers,json=data)
-# print(response.json()['choices'][0]['message']['content'])``
-# # print(response.json())
-}
-#下面统一使用gpt-3.5-turbo
-cilent=OpenAI(api_key="sk-nhj5mTAnsnAKDHTIbpHwMDZ39nO7firbpN0YahiubST4yadR",base_url="https://api2.aigcbest.top/v1")
+# print(response.json()['choices'][0]['message']['content'])
+# print(response.json())
+
+# 下面统一使用 gpt-3.5-turbo
+cilent = OpenAI(api_key=API_KEY, base_url=API_URL)
 with open('catgirl_blog.txt','r',encoding='utf-8') as f:
     content=f.read()
 memory=[{
@@ -54,6 +59,6 @@ while True:
             answer+=now
         
     print("")
-    # print(answer)
+    print(answer)
     memory.append({"role":"assistant","content":answer})
 
