@@ -3,3 +3,6 @@ Pillow
 pywin32
 psutil
 pyperclip
+openai
+python-dotenv
+pywinauto==0.6.9
