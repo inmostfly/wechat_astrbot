@@ -10,7 +10,10 @@ import sys
 import tempfile
 import time
 import traceback
-from typing import Hashable, Iterable
+from typing import TYPE_CHECKING, Hashable, Iterable
+
+if TYPE_CHECKING:
+    from wechat_uia import Message
 
 
 def application_directory() -> Path:
@@ -45,7 +48,7 @@ def configure_console() -> None:
 def load_runtime_dependencies() -> None:
     """Import optional and third-party modules inside the guarded entrypoint."""
 
-    global ChatLogger, Message, OpenAI, WeChat
+    global ChatLogger, OpenAI, WeChat
     global call_weather_tool, list_weather_tools, load_dotenv
 
     from openai import OpenAI as OpenAIClient
@@ -55,7 +58,7 @@ def load_runtime_dependencies() -> None:
         call_weather_tool as runtime_call_weather_tool,
         list_weather_tools as runtime_list_weather_tools,
     )
-    from wechat_uia import Message as RuntimeMessage, WeChat as RuntimeWeChat
+    from wechat_uia import WeChat as RuntimeWeChat
 
     try:
         from dotenv import load_dotenv as runtime_load_dotenv
@@ -64,7 +67,6 @@ def load_runtime_dependencies() -> None:
 
     OpenAI = OpenAIClient
     ChatLogger = RuntimeChatLogger
-    Message = RuntimeMessage
     WeChat = RuntimeWeChat
     call_weather_tool = runtime_call_weather_tool
     list_weather_tools = runtime_list_weather_tools
