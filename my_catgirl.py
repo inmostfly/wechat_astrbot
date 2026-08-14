@@ -1,21 +1,16 @@
+from __future__ import annotations
+
 import json
 import os
 from collections import deque
+from datetime import datetime
 from pathlib import Path
+import platform
 import sys
+import tempfile
 import time
+import traceback
 from typing import Hashable, Iterable
-
-from openai import OpenAI
-
-from chat_logger import ChatLogger
-from weather_mcp_client import call_weather_tool, list_weather_tools
-from wechat_uia import Message, WeChat
-
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    load_dotenv = None
 
 
 def application_directory() -> Path:
@@ -45,6 +40,129 @@ def configure_console() -> None:
         stream = getattr(sys, stream_name, None)
         if stream is not None and hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+def load_runtime_dependencies() -> None:
+    """Import optional and third-party modules inside the guarded entrypoint."""
+
+    global ChatLogger, Message, OpenAI, WeChat
+    global call_weather_tool, list_weather_tools, load_dotenv
+
+    from openai import OpenAI as OpenAIClient
+
+    from chat_logger import ChatLogger as RuntimeChatLogger
+    from weather_mcp_client import (
+        call_weather_tool as runtime_call_weather_tool,
+        list_weather_tools as runtime_list_weather_tools,
+    )
+    from wechat_uia import Message as RuntimeMessage, WeChat as RuntimeWeChat
+
+    try:
+        from dotenv import load_dotenv as runtime_load_dotenv
+    except ImportError:
+        runtime_load_dotenv = None
+
+    OpenAI = OpenAIClient
+    ChatLogger = RuntimeChatLogger
+    Message = RuntimeMessage
+    WeChat = RuntimeWeChat
+    call_weather_tool = runtime_call_weather_tool
+    list_weather_tools = runtime_list_weather_tools
+    load_dotenv = runtime_load_dotenv
+
+
+def safe_console_write(message: str) -> None:
+    """Write a diagnostic even if one standard stream is unavailable."""
+
+    for stream_name in ("stderr", "stdout"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            stream.write(message + "\n")
+            stream.flush()
+            return
+        except (OSError, TypeError, ValueError):
+            continue
+
+
+def write_crash_report(
+    error: BaseException,
+    report_directory: str | Path | None = None,
+) -> Path | None:
+    """Persist a complete fatal traceback, with a temp-directory fallback."""
+
+    if report_directory is not None:
+        directories = [Path(report_directory)]
+    else:
+        try:
+            primary = application_directory() / "chat_logs"
+        except (OSError, RuntimeError):
+            primary = Path.cwd() / "chat_logs"
+        directories = [
+            primary,
+            Path(tempfile.gettempdir()) / "Catgirl微信助手" / "chat_logs",
+        ]
+
+    occurred_at = datetime.now()
+    filename = occurred_at.strftime("crash_%Y-%m-%d_%H-%M-%S")
+    filename += f"_{os.getpid()}.log"
+    traceback_text = "".join(
+        traceback.format_exception(type(error), error, error.__traceback__)
+    )
+    report = (
+        f"崩溃时间：{occurred_at:%Y-%m-%d %H:%M:%S}\n"
+        f"异常类型：{type(error).__name__}\n"
+        f"异常信息：{error}\n"
+        f"Python：{sys.version}\n"
+        f"系统：{platform.platform()}\n"
+        f"可执行文件：{sys.executable}\n"
+        f"工作目录：{Path.cwd()}\n"
+        f"PyInstaller：{bool(getattr(sys, 'frozen', False))}\n\n"
+        "完整调用栈：\n"
+        f"{traceback_text}"
+    )
+
+    last_error: OSError | None = None
+    for directory in dict.fromkeys(directories):
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / filename
+            path.write_text(report, encoding="utf-8", errors="replace")
+            return path
+        except OSError as write_error:
+            last_error = write_error
+
+    safe_console_write(f"无法写入崩溃日志：{last_error}")
+    return None
+
+
+def wait_for_user_after_crash() -> None:
+    """Keep a double-clicked Windows EXE console visible after a fatal error."""
+
+    if not getattr(sys, "frozen", False):
+        return
+
+    safe_console_write("程序已停止。按回车退出，或直接关闭此窗口。")
+    try:
+        input()
+    except (EOFError, OSError, ValueError):
+        # A damaged stdin handle cannot accept input. Keep the process alive so
+        # the user can still read the error and close the console manually.
+        if os.name == "nt":
+            while True:
+                time.sleep(3600)
+
+
+def run_entrypoint() -> None:
+    """Dispatch the interactive bot or its non-interactive MCP child process."""
+
+    if "--weather-mcp-server" in sys.argv:
+        from weather_mcp_server import run_server
+
+        run_server()
+        return
+    main()
 
 
 class MessageTracker:
@@ -124,6 +242,7 @@ def ask_model(client, model, memory, weather_tools, chat_log) -> str:
 
 def main() -> None:
     configure_console()
+    load_runtime_dependencies()
     app_directory = application_directory()
     if load_dotenv is not None:
         load_dotenv(app_directory / ".env")
@@ -132,8 +251,7 @@ def main() -> None:
     api_url = os.getenv("API_URL_2")
     model = os.getenv("MODEL_2", "deepseek-v4-flash")
     if not api_key:
-        print("❌ 错误：缺少 API_KEY_2 环境变量")
-        sys.exit(1)
+        raise RuntimeError("缺少 API_KEY_2 环境变量")
 
     chat_log = ChatLogger(app_directory / "chat_logs")
     print(f"📝 本次聊天日志：{chat_log.path}")
@@ -234,7 +352,13 @@ def main() -> None:
                 message = f"{type(error).__name__}: {error}"
                 print(f"⚠️ 错误: {message}")
                 chat_log.error(message)
-                wx.SendMsg(f"⚠️ 错误: {message}")
+                try:
+                    wx.SendMsg(f"⚠️ 错误: {message}")
+                except Exception as notify_error:
+                    chat_log.error(
+                        "错误通知发送失败："
+                        f"{type(notify_error).__name__}: {notify_error}"
+                    )
                 time.sleep(3)
     finally:
         if wx is not None:
@@ -243,9 +367,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    if "--weather-mcp-server" in sys.argv:
-        from weather_mcp_server import run_server
-
-        run_server()
-    else:
-        main()
+    try:
+        run_entrypoint()
+    except Exception as fatal_error:
+        crash_path = write_crash_report(fatal_error)
+        safe_console_write("\n❌ 程序发生无法继续运行的错误。")
+        safe_console_write(f"{type(fatal_error).__name__}: {fatal_error}")
+        if crash_path is not None:
+            safe_console_write(f"完整崩溃日志：{crash_path}")
+        if "--weather-mcp-server" not in sys.argv:
+            wait_for_user_after_crash()
+        raise SystemExit(1)
