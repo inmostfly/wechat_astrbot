@@ -23,6 +23,7 @@ secrets.*
 # Logs
 *.log
 logs/
+chat_logs/
 wxauto_logs/
 
 # IDE / editor
