@@ -6,3 +6,4 @@ pyperclip
 openai
 python-dotenv
 pywinauto==0.6.9
+mcp>=1.27,<2

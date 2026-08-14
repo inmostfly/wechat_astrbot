@@ -1,0 +1,9 @@
+把下面两行加入项目根目录的 .env：
+
+QWEATHER_API_KEY=在和风天气控制台创建的API_KEY
+QWEATHER_API_HOST=控制台分配的API_Host
+
+示例 Host 形式：abcxyz.qweatherapi.com
+可以不写 https://，程序会自动补全。
+
+不要把真实 API Key 发到聊天、写进技术文档或提交到 Git。
