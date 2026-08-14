@@ -272,7 +272,7 @@ def main() -> None:
 
     wx = None
     try:
-        wx = WeChat()
+        wx = WeChat(always_on_top=True)
         target = os.getenv("WECHAT_TARGET", "Inmost")
         wx.ChatWith(target, exact=True)
         chat_log.system(f"已连接微信会话：{target}")

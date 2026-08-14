@@ -58,6 +58,7 @@ class WeChat:
         self,
         wechat_exe: str | os.PathLike[str] | None = None,
         timeout: float = 10,
+        always_on_top: bool = True,
         **_: object,
     ) -> None:
         configured_path = wechat_exe or os.getenv("WECHAT_EXE")
@@ -72,7 +73,8 @@ class WeChat:
         self._window = self._connect_window()
         self._main_hwnd = self._window.handle
         self.BringToFront()
-        self.SetAlwaysOnTop(True)
+        if always_on_top:
+            self.SetAlwaysOnTop(True)
 
     @staticmethod
     def _visible_windows():

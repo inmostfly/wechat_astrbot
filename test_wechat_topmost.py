@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from types import ModuleType
 import unittest
+from unittest.mock import patch
 
 
 try:
@@ -64,6 +65,27 @@ class TopmostTests(unittest.TestCase):
         wx.Close()
         self.assertEqual(button.name, "取消置顶")
         self.assertEqual(button.clicks, 0)
+
+    def test_constructor_can_skip_enabling_topmost(self) -> None:
+        fake_window = type("FakeWindow", (), {"handle": 123})()
+        with (
+            patch.object(WeChat, "_connect_window", return_value=fake_window),
+            patch.object(WeChat, "BringToFront") as bring_to_front,
+            patch.object(WeChat, "SetAlwaysOnTop") as set_topmost,
+        ):
+            WeChat(always_on_top=False)
+        bring_to_front.assert_called_once_with()
+        set_topmost.assert_not_called()
+
+    def test_constructor_enables_topmost_by_default(self) -> None:
+        fake_window = type("FakeWindow", (), {"handle": 123})()
+        with (
+            patch.object(WeChat, "_connect_window", return_value=fake_window),
+            patch.object(WeChat, "BringToFront"),
+            patch.object(WeChat, "SetAlwaysOnTop") as set_topmost,
+        ):
+            WeChat()
+        set_topmost.assert_called_once_with(True)
 
 
 if __name__ == "__main__":
