@@ -26,6 +26,7 @@ CHAT_INPUT_ID = "chat_input_field"
 CHAT_LIST_ID = "chat_message_list"
 CHAT_NAME_ID_SUFFIX = "current_chat_name_label"
 SEARCH_LIST_ID = "search_list"
+TOPMOST_BUTTON_NAMES = {"置顶", "取消置顶", "置顶窗口", "取消置顶窗口"}
 SYSTEM_TIME_PATTERN = re.compile(
     r"^(?:(?:今天|昨天|前天|星期[一二三四五六日天]|周[一二三四五六日天])\s*)?"
     r"(?:(?:上午|下午|晚上|凌晨|中午)\s*)?\d{1,2}:\d{2}$"
@@ -71,6 +72,7 @@ class WeChat:
         self._window = self._connect_window()
         self._main_hwnd = self._window.handle
         self.BringToFront()
+        self.SetAlwaysOnTop(True)
 
     @staticmethod
     def _visible_windows():
@@ -206,8 +208,43 @@ class WeChat:
                 except win32gui.error:
                     pass
 
+    def _topmost_button(self):
+        """Return WeChat's native topmost toggle button."""
+
+        for control in self._refresh_window().descendants(control_type="Button"):
+            if control.window_text().strip() in TOPMOST_BUTTON_NAMES:
+                return control
+        raise WeChatUIAError("找不到微信右上角的置顶按钮")
+
+    @staticmethod
+    def _button_means_topmost_enabled(button_name: str) -> bool:
+        """Infer current state from the action exposed by the toggle button."""
+
+        return button_name.strip().startswith("取消置顶")
+
+    def SetAlwaysOnTop(self, enabled: bool = True) -> bool:
+        """Set WeChat's native topmost state and report whether it changed."""
+
+        button = self._topmost_button()
+        current_name = button.window_text().strip()
+        if self._button_means_topmost_enabled(current_name) == enabled:
+            return False
+
+        button.click_input()
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            updated_name = self._topmost_button().window_text().strip()
+            if self._button_means_topmost_enabled(updated_name) == enabled:
+                return True
+
+        expected_action = "取消置顶" if enabled else "置顶"
+        raise WeChatUIAError(
+            f"微信置顶状态切换超时，按钮未变为“{expected_action}”"
+        )
+
     def Close(self) -> None:
-        """Release adapter resources without changing the WeChat window."""
+        """Release resources while deliberately preserving topmost state."""
 
     def _control_by_id(self, automation_id: str):
         controls = [
