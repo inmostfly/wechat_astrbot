@@ -4,4 +4,6 @@ logs/
 *.png
 __pycache__/
 *.py[cod]
-
+*.exe
+*.dll
+*.pyd
