@@ -1,0 +1,2 @@
+# UI Automation 归档版打包依赖
+pyinstaller>=6,<7

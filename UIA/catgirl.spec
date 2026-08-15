@@ -4,14 +4,18 @@ from pathlib import Path
 import sys
 
 
+UIA_DIR = Path(SPECPATH).resolve()
+PROJECT_ROOT = UIA_DIR.parent
+
+
 jpeg_dll = Path(sys.executable).resolve().parent / "Library" / "bin" / "jpeg8.dll"
 extra_binaries = [(str(jpeg_dll), ".")] if jpeg_dll.is_file() else []
 
 a = Analysis(
     ["my_catgirl.py"],
-    pathex=[],
+    pathex=[str(UIA_DIR), str(PROJECT_ROOT)],
     binaries=extra_binaries,
-    datas=[("聊天助手.txt", ".")],
+    datas=[(str(PROJECT_ROOT / "聊天助手.txt"), ".")],
     hiddenimports=["anyio._backends._asyncio"],
     hookspath=[],
     hooksconfig={},
