@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import my_catgirl
+from UIA import my_catgirl
 
 
 class CrashHandlingTests(unittest.TestCase):

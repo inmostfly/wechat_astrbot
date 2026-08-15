@@ -3,10 +3,28 @@
 from __future__ import annotations
 
 from collections import deque
+import sys
+from types import ModuleType
 import unittest
 
-from my_catgirl import MessageTracker
-from wechat_uia import Message, WeChat
+from UIA.my_catgirl import MessageTracker
+
+try:
+    from UIA.wechat_uia import Message, WeChat
+except ModuleNotFoundError as error:
+    windows_modules = {
+        "pywinauto",
+        "win32api",
+        "win32con",
+        "win32gui",
+        "win32process",
+    }
+    if error.name not in windows_modules:
+        raise
+    for module_name in windows_modules:
+        sys.modules.setdefault(module_name, ModuleType(module_name))
+    sys.modules["pywinauto"].Desktop = object
+    from UIA.wechat_uia import Message, WeChat
 
 
 class MessageFilteringTests(unittest.TestCase):

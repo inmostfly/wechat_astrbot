@@ -12,16 +12,32 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Hashable, Iterable
 
+
+SOURCE_PROJECT_DIRECTORY = Path(__file__).resolve().parent.parent
+if not getattr(sys, "frozen", False):
+    source_root = str(SOURCE_PROJECT_DIRECTORY)
+    if source_root not in sys.path:
+        sys.path.insert(0, source_root)
+
+
 if TYPE_CHECKING:
-    from wechat_uia import Message
+    from UIA.wechat_uia import Message
 
 
 def application_directory() -> Path:
-    """Directory for editable config and logs in source and frozen builds."""
+    """Directory for UIA-local config and logs in source and frozen builds."""
 
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
+
+
+def shared_project_directory() -> Path:
+    """Locate MCP, logger, prompt, and the shared .env kept in the parent."""
+
+    if getattr(sys, "frozen", False):
+        return application_directory()
+    return SOURCE_PROJECT_DIRECTORY
 
 
 def bundled_resource(name: str) -> Path:
@@ -48,7 +64,7 @@ def configure_console() -> None:
 def load_runtime_dependencies() -> None:
     """Import optional and third-party modules inside the guarded entrypoint."""
 
-    global ChatLogger, OpenAI, WeChat
+    global ChatLogger, Message, OpenAI, WeChat
     global call_weather_tool, list_weather_tools, load_dotenv
 
     from openai import OpenAI as OpenAIClient
@@ -58,7 +74,11 @@ def load_runtime_dependencies() -> None:
         call_weather_tool as runtime_call_weather_tool,
         list_weather_tools as runtime_list_weather_tools,
     )
-    from wechat_uia import WeChat as RuntimeWeChat
+    try:
+        from .wechat_uia import Message as RuntimeMessage, WeChat as RuntimeWeChat
+    except ImportError:
+        # Direct execution and PyInstaller run this file outside package mode.
+        from wechat_uia import Message as RuntimeMessage, WeChat as RuntimeWeChat
 
     try:
         from dotenv import load_dotenv as runtime_load_dotenv
@@ -67,6 +87,7 @@ def load_runtime_dependencies() -> None:
 
     OpenAI = OpenAIClient
     ChatLogger = RuntimeChatLogger
+    Message = RuntimeMessage
     WeChat = RuntimeWeChat
     call_weather_tool = runtime_call_weather_tool
     list_weather_tools = runtime_list_weather_tools
@@ -247,7 +268,10 @@ def main() -> None:
     load_runtime_dependencies()
     app_directory = application_directory()
     if load_dotenv is not None:
-        load_dotenv(app_directory / ".env")
+        shared_directory = shared_project_directory()
+        load_dotenv(shared_directory / ".env", override=False)
+        if app_directory != shared_directory:
+            load_dotenv(app_directory / ".env", override=True)
 
     api_key = os.getenv("API_KEY_2")
     api_url = os.getenv("API_URL_2")
@@ -274,7 +298,7 @@ def main() -> None:
 
     wx = None
     try:
-        wx = WeChat(always_on_top=True)
+        wx = WeChat(always_on_top=False)
         target = os.getenv("WECHAT_TARGET", "Inmost")
         wx.ChatWith(target, exact=True)
         chat_log.system(f"已连接微信会话：{target}")

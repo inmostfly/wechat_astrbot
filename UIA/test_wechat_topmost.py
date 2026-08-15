@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 
 try:
-    from wechat_uia import WeChat
+    from UIA.wechat_uia import WeChat
 except ModuleNotFoundError as error:
     # These tests exercise state transitions only, so CI can use lightweight
     # module placeholders when Windows UI packages are not installed.
@@ -25,7 +25,7 @@ except ModuleNotFoundError as error:
     for module_name in windows_modules:
         sys.modules.setdefault(module_name, ModuleType(module_name))
     sys.modules["pywinauto"].Desktop = object
-    from wechat_uia import WeChat
+    from UIA.wechat_uia import WeChat
 
 
 class FakeButton:
