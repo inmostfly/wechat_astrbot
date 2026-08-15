@@ -11,6 +11,7 @@
 - 保存同步游标和最近消息指纹，防止重启后重复回复
 - 首次连接默认跳过初始积压消息
 - 复用父项目的大模型配置、聊天人格、聊天日志和和风天气 MCP
+- 支持搜索互联网，以及读取用户给出的公开网页并附带来源网址
 - 控制台输入 `quit`、`exit`、`stop`、`退出` 或 `停止`，安全下线
 - 致命错误写入 `logs/crash_日期_时间.log`，Windows 窗口等待用户确认后关闭
 
@@ -26,6 +27,8 @@ python main.py
 也可以双击 `start.bat`。
 
 程序优先复用父目录 `catgirl/.env`，本目录的 `.env` 只用于覆盖。第一次运行会生成二维码图片 `data/weixin-login.png` 和备用扫码链接；扫码确认后才会开始收发消息。
+
+联网搜索需要在 `.env` 中配置 `TAVILY_API_KEY`，或填写自建的 `SEARXNG_URL`。直接读取公开网址不需要搜索 API Key。配置后重启机器人，可以发送“联网搜索某个内容”或直接发送完整网址。
 
 ## 目录
 
@@ -47,5 +50,6 @@ ilink_catgirl/
 - 当前只实现一对一文本收发；图片、语音、文件和视频需要额外的 CDN 加密流程。
 - 这是根据腾讯公开项目中的协议说明编写的独立 Python 客户端，不是腾讯官方 Python SDK。
 - `data/session.json` 内含机器人令牌，不应上传或分享；本目录 `.gitignore` 已忽略它。
+- 网页读取只支持公开 HTTP/HTTPS 文本页面，拒绝 localhost、内网 IP、云服务器元数据地址、超大响应和非文本文件。
+- 当前不执行网页 JavaScript，也不读取登录后内容；PDF、图片和视频尚未实现正文解析。
 - 腾讯可能更新协议。若未来失效，应先对照官方仓库的 `README.zh_CN.md`、`src/auth/login-qr.ts`、`src/api/api.ts` 和 `src/api/types.ts`。
-
