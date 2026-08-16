@@ -646,12 +646,29 @@ class ReminderTools:
                     "id": int(row["id"]),
                     "content": row["content"],
                     "type": row["action_kind"],
+                    "type_label": (
+                        "天气侦察任务"
+                        if row["action_kind"] == "weather"
+                        else "日常提醒任务"
+                    ),
                     "run_at": local_time.isoformat(timespec="seconds"),
+                    "schedule_text": (
+                        f"每天 {local_time:%H:%M}"
+                        if row["repeat_kind"] == "daily"
+                        else local_time.strftime("%Y-%m-%d %H:%M")
+                    ),
                     "repeat": row["repeat_kind"],
                     "status": row["status"],
                 }
             )
-        return {"count": len(reminders), "reminders": reminders}
+        return {
+            "count": len(reminders),
+            "reminders": reminders,
+            "presentation_hint": (
+                "准确保留任务数量、编号、内容、时间和类型，但请使用爱丽丝的RPG任务日志口吻"
+                "自然汇报，不要机械复读字段名；不要声称查询到结果中不存在的信息。"
+            ),
+        }
 
     def _cancel(self, user_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
         reminder_id = int(arguments.get("reminder_id") or 0)
@@ -758,6 +775,7 @@ class ReminderScheduler:
         checkin_enabled: bool = False,
         checkin_after_hours: float = 23,
         checkin_messages: Iterable[str] = (),
+        reminder_intros: Iterable[str] = (),
         context_recorder: Callable[[str, str], None] | None = None,
         owner_user_id: str = "",
     ) -> None:
@@ -779,6 +797,9 @@ class ReminderScheduler:
         )
         self.checkin_messages = tuple(
             text.strip() for text in checkin_messages if text.strip()
+        )
+        self.reminder_intros = tuple(
+            text.strip() for text in reminder_intros if text.strip()
         )
         self.context_recorder = context_recorder
         self.owner_user_id = owner_user_id
@@ -911,6 +932,8 @@ class ReminderScheduler:
                 self.store.record_outbound(user_id, chunks)
                 sent_at = _now_timestamp()
                 self.store.mark_delivered(included, sent_at)
+                if self.context_recorder is not None:
+                    self.context_recorder(user_id, text)
                 self.chat_log.assistant(f"[定时提醒][{user_id}] {text}")
             except Exception as error:
                 error_text = str(error)
@@ -937,7 +960,19 @@ class ReminderScheduler:
     def _build_batch(
         self, reminders: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
-        header = "⏰ 定时提醒"
+        header = (
+            random.choice(self.reminder_intros)
+            if self.reminder_intros
+            else "⏰ 定时提醒"
+        )
+        if len(reminders) == 1:
+            reminder = reminders[0]
+            content = str(reminder["delivery_text"]).strip()
+            available = self.max_message_chars - len(header) - 2
+            if len(content) > available:
+                content = content[: max(1, available - 1)] + "…"
+            return [reminder], [], f"{header}\n{content}"
+
         included: list[dict[str, Any]] = []
         lines: list[str] = []
         for reminder in reminders:

@@ -25,6 +25,7 @@ if errorlevel 1 goto :failed
 
 set "CATGIRL_OUTPUT=dist\Catgirl微信机器人"
 copy /Y "主动问候语.txt" "%CATGIRL_OUTPUT%\主动问候语.txt" >nul
+copy /Y "定时提醒开场白.txt" "%CATGIRL_OUTPUT%\定时提醒开场白.txt" >nul
 copy /Y "..\聊天助手.txt" "%CATGIRL_OUTPUT%\聊天助手.txt" >nul
 copy /Y ".env.example" "%CATGIRL_OUTPUT%\.env.example" >nul
 copy /Y "README.md" "%CATGIRL_OUTPUT%\README.md" >nul

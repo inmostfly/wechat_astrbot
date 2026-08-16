@@ -195,6 +195,8 @@ class ReminderTests(unittest.TestCase):
         listed = json.loads(tools.call(self.user_id, "list_reminders", {}))
         self.assertEqual(listed["count"], 1)
         self.assertEqual(listed["reminders"][0]["id"], reminder_id)
+        self.assertEqual(listed["reminders"][0]["type_label"], "日常提醒任务")
+        self.assertIn("任务日志口吻", listed["presentation_hint"])
 
         cancelled = json.loads(
             tools.call(self.user_id, "cancel_reminder", {"reminder_id": reminder_id})
@@ -308,6 +310,30 @@ class ReminderTests(unittest.TestCase):
         self.assertIn("测试提醒", sent[0][2])
         self.assertEqual(self._status(reminder_id)[0], "sent")
         self.assertEqual(self.store.recipient(self.user_id)["outbound_count"], 1)
+
+    def test_single_reminder_uses_lively_intro_and_records_context(self) -> None:
+        reminder_id = self._create_due()
+        sent: list[str] = []
+        context: list[tuple[str, str]] = []
+        scheduler = ReminderScheduler(
+            self.store,
+            lambda _user, _token, text: sent.append(text) or 1,
+            FakeLog(),
+            threading.Event(),
+            threading.RLock(),
+            reminder_intros=["邦邦咔邦！任务时间到啦！"],
+            context_recorder=lambda user, text: context.append((user, text)),
+        )
+
+        scheduler._deliver_group(self.user_id, self.store.claim_due(time.time()))
+
+        self.assertEqual(
+            sent,
+            ["邦邦咔邦！任务时间到啦！\n测试提醒"],
+        )
+        self.assertNotIn("1. 测试提醒", sent[0])
+        self.assertEqual(context, [(self.user_id, sent[0])])
+        self.assertEqual(self._status(reminder_id)[0], "sent")
 
     def test_quota_and_24_hour_window_wait_for_reactivation(self) -> None:
         quota_id = self._create_due()

@@ -15,11 +15,22 @@ if str(ILINK_DIR) not in sys.path:
     sys.path.insert(0, str(ILINK_DIR))
 
 import main as ilink_main
+import bot
 import weather_mcp_client
 import web_mcp_client
 
 
 class ILinkPackagingTests(unittest.TestCase):
+    def test_numbered_message_file_is_loaded_without_list_number(self) -> None:
+        with mock.patch.object(
+            bot,
+            "resource_path",
+            return_value=ILINK_DIR / "主动问候语.txt",
+        ):
+            messages = bot.load_checkin_messages()
+        self.assertGreaterEqual(len(messages), 1)
+        self.assertFalse(any(message.startswith("1. ") for message in messages))
+
     def test_internal_weather_server_is_dispatched(self) -> None:
         runner = mock.Mock()
         fake_module = SimpleNamespace(run_server=runner)
@@ -52,6 +63,7 @@ class ILinkPackagingTests(unittest.TestCase):
         self.assertNotIn('"UIA"', spec)
         self.assertNotIn('"wxauto"', spec)
         self.assertIn('"主动问候语.txt"', spec)
+        self.assertIn('"定时提醒开场白.txt"', spec)
         self.assertIn('"weather_mcp_server"', spec)
         self.assertIn('"web_mcp_server"', spec)
 

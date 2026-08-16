@@ -6,6 +6,7 @@ from collections import defaultdict
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import threading
 import time
@@ -73,17 +74,36 @@ def env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
-def load_checkin_messages() -> list[str]:
-    """Load original proactive messages, one non-comment line at a time."""
+def load_message_lines(filename: str, fallback: str) -> list[str]:
+    """Load message candidates and discard optional human-facing numbering."""
 
-    path = resource_path("主动问候语.txt")
+    path = resource_path(filename)
     if not path.exists():
-        return ["老师，今日通讯任务已经刷新。回复一句话，就可以让我们的频道继续保持在线！"]
-    return [
-        line.strip()
+        return [fallback]
+    messages = [
+        re.sub(r"^\s*\d+[.、)]\s*", "", line).strip()
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
+    return [message for message in messages if message] or [fallback]
+
+
+def load_checkin_messages() -> list[str]:
+    """Load original proactive messages, one non-comment line at a time."""
+
+    return load_message_lines(
+        "主动问候语.txt",
+        "老师，今日通讯任务已经刷新。回复一句话，就可以让我们的频道继续保持在线！",
+    )
+
+
+def load_reminder_intros() -> list[str]:
+    """Load randomized intros used by deterministic scheduled deliveries."""
+
+    return load_message_lines(
+        "定时提醒开场白.txt",
+        "邦邦咔邦！老师，任务计时器响啦——爱丽丝来递交最新任务情报！",
+    )
 
 
 def load_parent_components():
@@ -323,6 +343,7 @@ def run_bot() -> None:
             checkin_enabled=env_bool("CHECKIN_ENABLED", True),
             checkin_after_hours=float(os.getenv("CHECKIN_AFTER_HOURS", "23")),
             checkin_messages=load_checkin_messages(),
+            reminder_intros=load_reminder_intros(),
             context_recorder=engine.record_assistant_context,
             owner_user_id=session.owner_user_id,
         )
