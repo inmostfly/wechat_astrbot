@@ -359,7 +359,7 @@ class ILinkClient:
         text: str,
         *,
         max_chars: int = 1800,
-    ) -> None:
+    ) -> int:
         session = self._require_session()
         if not to_user_id or not context_token:
             raise ILinkError("发送消息缺少 to_user_id 或 context_token")
@@ -394,6 +394,7 @@ class ILinkClient:
                 raise ILinkError(
                     f"sendmessage 失败：ret={ret}，{response.get('errmsg') or '无说明'}"
                 )
+        return len(chunks)
 
     @staticmethod
     def _split_text(text: str, *, max_chars: int) -> Iterable[str]:
