@@ -48,6 +48,7 @@ CREATE TABLE recipients (
     user_id TEXT PRIMARY KEY,
     context_token TEXT NOT NULL,
     last_inbound_at REAL NOT NULL,
+    last_checkin_at REAL,
     outbound_count INTEGER NOT NULL DEFAULT 0,
     updated_at REAL NOT NULL
 );
@@ -60,6 +61,7 @@ CREATE TABLE recipients (
 | `user_id` | iLink 用户标识，也是主键，不允许重复 |
 | `context_token` | 最近一条用户消息携带的会话令牌 |
 | `last_inbound_at` | 最近主动消息的 Unix 时间戳 |
+| `last_checkin_at` | 最近一次主动问候成功发送的时间；还没问候时为 `NULL` |
 | `outbound_count` | 这次激活以后已发送的消息分片数 |
 | `updated_at` | 最后更新时间 |
 
@@ -215,6 +217,37 @@ outbound_count < 10
 
 这只是本地保护。微信服务器仍是最终判断者；如果返回 `ret=-2` 或限流错误，任务会再次等待用户激活。
 
+### 7.1 为什么在23小时主动询问
+
+如果严格等满24小时，微信主动下发窗口可能已经关闭。因此默认阈值是最后一次入站消息后的23小时：
+
+```text
+用户发消息
+    ↓ 保存 last_inbound_at，发送计数归零
+等待约23小时
+    ↓ 随机发送一条主动问候
+保存 last_checkin_at，发送计数加一
+    ↓ 用户回复
+更新 last_inbound_at，下一轮重新计时
+```
+
+查询条件的关键部分是：
+
+```sql
+WHERE last_inbound_at <= ?
+  AND (last_checkin_at IS NULL OR last_checkin_at < last_inbound_at)
+```
+
+第二行保证“同一次用户激活只问候一次”。用户回复后，新的 `last_inbound_at` 会晚于旧的 `last_checkin_at`，于是下一轮23小时后才重新满足条件。问候同样计入 `outbound_count`，不会绕过10条限制。
+
+问候内容不是模型生成的。程序从 `主动问候语.txt` 读取所有非空、非注释行，再使用：
+
+```python
+text = random.choice(checkin_messages)
+```
+
+发送成功后，`ReplyEngine.record_assistant_context()` 会把同一句话作为 `assistant` 消息放入该用户的内存上下文。这样用户回答“好的”“我在”时，下一次模型调用能看到此前的主动询问。它与原有聊天历史一样保存在进程内存中，程序重启后不会恢复。
+
 ## 8. 模型工具
 
 模型可以调用五个工具：
@@ -286,9 +319,11 @@ REMINDER_TIMEZONE=Asia/Shanghai
 REMINDER_ACTIVE_HOURS=24
 REMINDER_OUTBOUND_LIMIT=10
 REMINDER_CHECK_INTERVAL_SECONDS=1
+CHECKIN_ENABLED=true
+CHECKIN_AFTER_HOURS=23
 ```
 
-通常保持默认值即可。修改后重启机器人。
+`CHECKIN_ENABLED=false` 会彻底关闭主动问候；`CHECKIN_AFTER_HOURS` 是最后一次收到用户消息后等待的小时数。程序会自动把过大的值限制在主动下发窗口结束前，但建议保持 `23`。这些配置可以写在父目录 `catgirl/.env` 或 `ilink_catgirl/.env`，后者优先。修改后重启机器人。
 
 ## 11. 测试
 
@@ -298,4 +333,4 @@ REMINDER_CHECK_INTERVAL_SECONDS=1
 python -m unittest -v test_reminders.py
 ```
 
-测试覆盖数据库持久化、旧表自动迁移、创建/查询/取消、到期发送、到点调用天气、发送计数、24小时窗口、额度耗尽、每日续排和 `ret=-2` 恢复。
+测试覆盖数据库持久化、旧表自动迁移、创建/查询/取消、到期发送、到点调用天气、发送计数、24小时窗口、额度耗尽、每日续排、主动问候只发一次、上下文记录和 `ret=-2` 恢复。
