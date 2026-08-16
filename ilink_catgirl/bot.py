@@ -217,9 +217,7 @@ def ensure_login(client: ILinkClient, store: SessionStore) -> ILinkSession:
     print("本机尚未保存微信机器人登录状态，正在生成二维码……")
     challenge = client.request_login_qr()
     qr_path = client.save_login_qr(challenge, PROJECT_DIR / "data" / "weixin-login.png")
-    if qr_path:
-        print(f"二维码图片已保存：{qr_path}")
-    print(f"备用扫码链接：{challenge.qrcode_url}")
+    print(f"扫码链接：{challenge.qrcode_url},扫描二维码后即可接入专属助手")
     session = client.wait_for_login(challenge)
     store.save(session)
     print("微信机器人登录成功，凭据已保存在 data/session.json。")
