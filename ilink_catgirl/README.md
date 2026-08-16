@@ -31,6 +31,14 @@ python main.py
 
 也可以双击 `start.bat`。
 
+Windows 需要生成独立成品时，双击 `打包程序.bat`。脚本会安装 `requirements.txt` 和 `requirements-build.txt`，然后生成：
+
+```text
+ilink_catgirl/dist/Catgirl微信机器人/Catgirl微信机器人.exe
+```
+
+该成品只包含当前 iLink 轻量版、完整 MCP 包、天气/联网 MCP、日志模块以及必需的文本资源，不包含已经放弃的 `UIA/`、`wxauto/`、`pywinauto` 或 `comtypes`。PyInstaller 不能跨系统打包：Windows 构建得到 EXE；Ubuntu 应直接运行 Python，或在 Ubuntu 上执行同一份 spec 生成 Linux 可执行文件。
+
 程序优先复用父目录 `catgirl/.env`，本目录的 `.env` 只用于覆盖。第一次运行会生成二维码图片 `data/weixin-login.png` 和备用扫码链接；扫码确认后才会开始收发消息。
 
 联网搜索需要在 `.env` 中配置 `TAVILY_API_KEY`，或填写自建的 `SEARXNG_URL`。直接读取公开网址不需要搜索 API Key。配置后重启机器人，可以发送“联网搜索某个内容”或直接发送完整网址。
@@ -51,8 +59,11 @@ ilink_catgirl/
 ├─ reminders.py            # SQLite 提醒工具、资格计数和后台调度器
 ├─ 主动问候语.txt          # 每行一条候选问候，启动时读取并随机选择
 ├─ requirements.txt        # 独立的轻量依赖
+├─ requirements-build.txt  # 仅打包时需要的 PyInstaller
+├─ ilink_catgirl.spec       # 轻量版独立打包清单，不包含 UIA
 ├─ .env.example            # 可选覆盖配置
 ├─ start.bat               # Windows 双击启动入口
+├─ 打包程序.bat            # 安装依赖并生成轻量版 Windows 成品
 └─ 独立机器人轻量客户端技术文档.md
 ```
 
