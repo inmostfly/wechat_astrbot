@@ -6,6 +6,7 @@ from collections import defaultdict
 import json
 import os
 from pathlib import Path
+import sys
 import threading
 import time
 import traceback
@@ -34,8 +35,28 @@ from weixin_ilink import (
 )
 
 
-PROJECT_DIR = Path(__file__).resolve().parent
-PARENT_PROJECT_DIR = PROJECT_DIR.parent
+FROZEN = bool(getattr(sys, "frozen", False))
+PROJECT_DIR = (
+    Path(sys.executable).resolve().parent
+    if FROZEN
+    else Path(__file__).resolve().parent
+)
+BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", PROJECT_DIR))
+PARENT_PROJECT_DIR = PROJECT_DIR if FROZEN else PROJECT_DIR.parent
+
+
+def resource_path(name: str) -> Path:
+    """Prefer editable files beside the executable, then bundled resources."""
+
+    candidates = (
+        PROJECT_DIR / name,
+        BUNDLE_DIR / name,
+        PARENT_PROJECT_DIR / name,
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
 
 
 def load_project_environment() -> None:
@@ -55,7 +76,7 @@ def env_bool(name: str, default: bool) -> bool:
 def load_checkin_messages() -> list[str]:
     """Load original proactive messages, one non-comment line at a time."""
 
-    path = PROJECT_DIR / "主动问候语.txt"
+    path = resource_path("主动问候语.txt")
     if not path.exists():
         return ["老师，今日通讯任务已经刷新。回复一句话，就可以让我们的频道继续保持在线！"]
     return [
@@ -99,7 +120,7 @@ class ReplyEngine:
         )
         self.chat_log = chat_log
         self.max_history = max(6, int(os.getenv("ILINK_MAX_HISTORY", "30")))
-        persona_path = PARENT_PROJECT_DIR / "聊天助手.txt"
+        persona_path = resource_path("聊天助手.txt")
         self.system_prompt = persona_path.read_text(encoding="utf-8").strip()
         self.system_prompt += (
             "\n\n当用户要求联网搜索、查询最新信息或提供网址时，使用联网工具。"

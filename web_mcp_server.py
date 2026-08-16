@@ -10,6 +10,7 @@ import json
 import os
 import re
 import socket
+import sys
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -24,10 +25,15 @@ except ImportError:
 from pathlib import Path
 
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parent
+)
 if load_dotenv is not None:
     load_dotenv(PROJECT_DIR / ".env", override=False)
-    load_dotenv(PROJECT_DIR / "ilink_catgirl" / ".env", override=True)
+    if not getattr(sys, "frozen", False):
+        load_dotenv(PROJECT_DIR / "ilink_catgirl" / ".env", override=True)
 
 
 mcp = FastMCP(

@@ -9,7 +9,11 @@ import sys
 import traceback
 
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parent
+)
 
 
 def configure_console() -> None:
@@ -43,9 +47,32 @@ def should_pause() -> bool:
     return os.name == "nt" and value not in {"0", "false", "no", "off"}
 
 
+def run_internal_server() -> bool:
+    """Run an MCP subprocess inside the frozen executable when requested."""
+
+    arguments = set(sys.argv[1:])
+    if "--weather-mcp-server" in arguments:
+        from weather_mcp_server import run_server
+
+        run_server()
+        return True
+    if "--web-mcp-server" in arguments:
+        from web_mcp_server import run_server
+
+        run_server()
+        return True
+    return False
+
+
 def main() -> int:
     configure_console()
+    internal_server = any(
+        argument in {"--weather-mcp-server", "--web-mcp-server"}
+        for argument in sys.argv[1:]
+    )
     try:
+        if run_internal_server():
+            return 0
         from bot import run_bot
 
         run_bot()
@@ -58,7 +85,7 @@ def main() -> int:
         print(f"程序遇到致命错误：{error}", file=sys.stderr)
         if path:
             print(f"完整崩溃记录：{path}", file=sys.stderr)
-        if should_pause():
+        if should_pause() and not internal_server:
             try:
                 input("按回车键关闭窗口……")
             except (EOFError, OSError):

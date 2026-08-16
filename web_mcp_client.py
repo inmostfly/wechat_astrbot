@@ -17,6 +17,12 @@ SERVER_PATH = Path(__file__).with_name("web_mcp_server.py")
 
 
 def server_parameters() -> StdioServerParameters:
+    if getattr(sys, "frozen", False):
+        return StdioServerParameters(
+            command=sys.executable,
+            args=["--web-mcp-server"],
+            cwd=str(Path(sys.executable).resolve().parent),
+        )
     return StdioServerParameters(
         command=sys.executable,
         args=[str(SERVER_PATH)],
