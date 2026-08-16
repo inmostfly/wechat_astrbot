@@ -47,6 +47,10 @@ BLOCKED_HOSTS = {
     "localhost.localdomain",
     "metadata.google.internal",
 }
+BLOCKED_METADATA_IPS = {
+    ipaddress.ip_address("169.254.169.254"),
+    ipaddress.ip_address("100.100.100.200"),
+}
 
 
 class WebToolError(RuntimeError):
@@ -174,13 +178,33 @@ def normalize_url(url: str) -> str:
     return urlunsplit((parts.scheme.lower(), netloc, parts.path or "/", parts.query, ""))
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
 def ensure_public_ip(address: str) -> None:
     try:
         ip = ipaddress.ip_address(address)
     except ValueError as error:
         raise WebToolError(f"无法识别目标 IP：{address}") from error
-    if not ip.is_global:
-        raise WebToolError(f"禁止访问非公网地址：{ip}")
+    if ip in BLOCKED_METADATA_IPS:
+        raise WebToolError(f"禁止访问云服务器元数据地址：{ip}")
+    if ip.is_loopback:
+        raise WebToolError(f"禁止访问本机回环地址：{ip}")
+    if ip.is_link_local:
+        raise WebToolError(f"禁止访问链路本地地址：{ip}")
+    if ip.is_unspecified or ip.is_multicast:
+        raise WebToolError(f"禁止访问无效目标地址：{ip}")
+    if ip.is_global:
+        return
+    if not env_bool("WEB_ALLOW_PRIVATE_ADDRESS"):
+        raise WebToolError(
+            f"禁止访问非公网地址：{ip}；如需访问可信内网或 Clash Fake-IP，"
+            "请设置 WEB_ALLOW_PRIVATE_ADDRESS=true"
+        )
 
 
 async def validate_public_url(url: str) -> str:
