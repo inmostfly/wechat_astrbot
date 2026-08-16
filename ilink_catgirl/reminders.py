@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone, tzinfo
 import json
 from pathlib import Path
+import random
 import re
 import sqlite3
 import threading
@@ -77,6 +78,7 @@ class ReminderStore:
                     user_id TEXT PRIMARY KEY,
                     context_token TEXT NOT NULL,
                     last_inbound_at REAL NOT NULL,
+                    last_checkin_at REAL,
                     outbound_count INTEGER NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL
                 );
@@ -120,6 +122,14 @@ class ReminderStore:
             if "action_args" not in columns:
                 connection.execute(
                     "ALTER TABLE reminders ADD COLUMN action_args TEXT NOT NULL DEFAULT '{}'"
+                )
+            recipient_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(recipients)")
+            }
+            if "last_checkin_at" not in recipient_columns:
+                connection.execute(
+                    "ALTER TABLE recipients ADD COLUMN last_checkin_at REAL"
                 )
             # A process may have stopped after claiming a task but before completing it.
             connection.execute(
@@ -178,6 +188,48 @@ class ReminderStore:
                 "SELECT * FROM recipients WHERE user_id = ?", (user_id,)
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def due_checkin_recipients(
+        self,
+        now: float,
+        checkin_after_seconds: float,
+        *,
+        owner_user_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """Return recipients that have not been checked in since their last message."""
+
+        cutoff = now - max(1, float(checkin_after_seconds))
+        parameters: list[Any] = [cutoff]
+        owner_filter = ""
+        if owner_user_id:
+            owner_filter = "AND user_id = ?"
+            parameters.append(owner_user_id)
+        with self._lock, self._connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM recipients
+                WHERE last_inbound_at <= ?
+                  AND (
+                    last_checkin_at IS NULL
+                    OR last_checkin_at < last_inbound_at
+                  )
+                  {owner_filter}
+                ORDER BY last_inbound_at
+                """,
+                parameters,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_checkin_sent(self, user_id: str, sent_at: float) -> None:
+        with self._lock, self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE recipients
+                SET last_checkin_at = ?, updated_at = ?
+                WHERE user_id = ?
+                """,
+                (sent_at, sent_at, user_id),
+            )
 
     def create_reminder(
         self,
@@ -703,6 +755,11 @@ class ReminderScheduler:
         outbound_limit: int = 10,
         check_interval: float = 1,
         max_message_chars: int = 1800,
+        checkin_enabled: bool = False,
+        checkin_after_hours: float = 23,
+        checkin_messages: Iterable[str] = (),
+        context_recorder: Callable[[str, str], None] | None = None,
+        owner_user_id: str = "",
     ) -> None:
         self.store = store
         self.sender = sender
@@ -714,6 +771,18 @@ class ReminderScheduler:
         self.outbound_limit = max(1, int(outbound_limit))
         self.check_interval = max(0.2, float(check_interval))
         self.max_message_chars = max(100, int(max_message_chars))
+        self.checkin_enabled = bool(checkin_enabled)
+        requested_checkin_seconds = max(1, float(checkin_after_hours)) * 3600
+        self.checkin_after_seconds = min(
+            requested_checkin_seconds,
+            max(1, self.active_seconds - 60),
+        )
+        self.checkin_messages = tuple(
+            text.strip() for text in checkin_messages if text.strip()
+        )
+        self.context_recorder = context_recorder
+        self.owner_user_id = owner_user_id
+        self._checkin_retry_after: dict[str, float] = {}
         self.thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -738,10 +807,61 @@ class ReminderScheduler:
                     grouped[str(reminder["user_id"])].append(reminder)
                 for user_id, reminders in grouped.items():
                     self._deliver_group(user_id, reminders)
+                self._send_due_checkins()
             except Exception as error:
                 self.chat_log.error(f"定时提醒调度异常：{error}")
             self.stop_event.wait(self.check_interval)
         self.chat_log.system("SQLite 定时提醒调度器已停止")
+
+    def _send_due_checkins(self) -> None:
+        """Send one non-model check-in for each inbound conversation window."""
+
+        if not self.checkin_enabled or not self.checkin_messages:
+            return
+        now = _now_timestamp()
+        recipients = self.store.due_checkin_recipients(
+            now,
+            self.checkin_after_seconds,
+            owner_user_id=self.owner_user_id,
+        )
+        for candidate in recipients:
+            user_id = str(candidate["user_id"])
+            if self._checkin_retry_after.get(user_id, 0) > now:
+                continue
+            with self.send_lock:
+                recipient = self.store.recipient(user_id)
+                now = _now_timestamp()
+                if recipient is None or not self._checkin_is_due(recipient, now):
+                    continue
+                reason = self._permission_reason(recipient, now)
+                if reason:
+                    continue
+                text = random.choice(self.checkin_messages)
+                try:
+                    chunks = self.sender(
+                        user_id,
+                        str(recipient["context_token"]),
+                        text,
+                    )
+                    self.store.record_outbound(user_id, chunks)
+                    sent_at = _now_timestamp()
+                    self.store.mark_checkin_sent(user_id, sent_at)
+                    if self.context_recorder is not None:
+                        self.context_recorder(user_id, text)
+                    self.chat_log.assistant(f"[主动问候][{user_id}] {text}")
+                    self._checkin_retry_after.pop(user_id, None)
+                except Exception as error:
+                    # Avoid retrying every scheduler tick when the channel is unavailable.
+                    self._checkin_retry_after[user_id] = now + 15 * 60
+                    self.chat_log.error(f"主动问候发送失败 [{user_id}]：{error}")
+
+    def _checkin_is_due(self, recipient: dict[str, Any], now: float) -> bool:
+        last_inbound = float(recipient["last_inbound_at"])
+        last_checkin = recipient.get("last_checkin_at")
+        return (
+            now - last_inbound >= self.checkin_after_seconds
+            and (last_checkin is None or float(last_checkin) < last_inbound)
+        )
 
     def _deliver_group(self, user_id: str, reminders: list[dict[str, Any]]) -> None:
         ids = [int(item["id"]) for item in reminders]

@@ -52,6 +52,19 @@ def env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def load_checkin_messages() -> list[str]:
+    """Load original proactive messages, one non-comment line at a time."""
+
+    path = PROJECT_DIR / "主动问候语.txt"
+    if not path.exists():
+        return ["老师，今日通讯任务已经刷新。回复一句话，就可以让我们的频道继续保持在线！"]
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
 def load_parent_components():
     """Import the existing logger and QWeather MCP bridge without copying them."""
 
@@ -102,6 +115,7 @@ class ReplyEngine:
         self.memories: dict[str, list[dict[str, Any]]] = defaultdict(
             lambda: [{"role": "system", "content": self.system_prompt}]
         )
+        self.memory_lock = threading.RLock()
 
         self.tools: list[dict[str, Any]] = []
         self.tool_callers: dict[str, Any] = {}
@@ -154,6 +168,18 @@ class ReplyEngine:
         memory[1:] = memory[-self.max_history :]
 
     def reply(self, user_id: str, text: str) -> str:
+        with self.memory_lock:
+            return self._reply_locked(user_id, text)
+
+    def record_assistant_context(self, user_id: str, text: str) -> None:
+        """Remember a message sent without the model so replies keep their context."""
+
+        with self.memory_lock:
+            memory = self.memories[user_id]
+            memory.append({"role": "assistant", "content": text})
+            self._trim(memory)
+
+    def _reply_locked(self, user_id: str, text: str) -> str:
         self.active_user_id = user_id
         memory = self.memories[user_id]
         memory.append({"role": "user", "content": text})
@@ -273,6 +299,11 @@ def run_bot() -> None:
             outbound_limit=int(os.getenv("REMINDER_OUTBOUND_LIMIT", "10")),
             check_interval=float(os.getenv("REMINDER_CHECK_INTERVAL_SECONDS", "1")),
             max_message_chars=max_reply_chars,
+            checkin_enabled=env_bool("CHECKIN_ENABLED", True),
+            checkin_after_hours=float(os.getenv("CHECKIN_AFTER_HOURS", "23")),
+            checkin_messages=load_checkin_messages(),
+            context_recorder=engine.record_assistant_context,
+            owner_user_id=session.owner_user_id,
         )
         reminder_scheduler.start()
         next_timeout_ms = 35_000

@@ -118,11 +118,65 @@ class ReminderTests(unittest.TestCase):
 
         ReminderStore(legacy_path)
         with closing(sqlite3.connect(legacy_path)) as connection:
-            columns = {
+            reminder_columns = {
                 row[1] for row in connection.execute("PRAGMA table_info(reminders)")
             }
-        self.assertIn("action_kind", columns)
-        self.assertIn("action_args", columns)
+            recipient_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(recipients)")
+            }
+        self.assertIn("action_kind", reminder_columns)
+        self.assertIn("action_args", reminder_columns)
+        self.assertIn("last_checkin_at", recipient_columns)
+
+    def test_proactive_checkin_is_sent_once_and_added_to_context(self) -> None:
+        self.store.record_inbound(
+            self.user_id,
+            "checkin-token",
+            received_at=time.time() - 23.5 * 3600,
+        )
+        sent: list[tuple[str, str, str]] = []
+        context: list[tuple[str, str]] = []
+        candidates = ["今日任务刷新啦！", "请回复一句话补充联络能量！"]
+        scheduler = ReminderScheduler(
+            self.store,
+            lambda user, token, text: sent.append((user, token, text)) or 1,
+            FakeLog(),
+            threading.Event(),
+            threading.RLock(),
+            checkin_enabled=True,
+            checkin_after_hours=23,
+            checkin_messages=candidates,
+            context_recorder=lambda user, text: context.append((user, text)),
+            owner_user_id=self.user_id,
+        )
+
+        scheduler._send_due_checkins()
+        scheduler._send_due_checkins()
+
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][0:2], (self.user_id, "checkin-token"))
+        self.assertIn(sent[0][2], candidates)
+        self.assertEqual(context, [(self.user_id, sent[0][2])])
+        recipient = self.store.recipient(self.user_id)
+        self.assertIsNotNone(recipient["last_checkin_at"])
+        self.assertEqual(recipient["outbound_count"], 1)
+
+    def test_proactive_checkin_waits_until_threshold(self) -> None:
+        sent: list[str] = []
+        scheduler = ReminderScheduler(
+            self.store,
+            lambda _user, _token, text: sent.append(text) or 1,
+            FakeLog(),
+            threading.Event(),
+            threading.RLock(),
+            checkin_enabled=True,
+            checkin_after_hours=23,
+            checkin_messages=["测试问候"],
+        )
+
+        scheduler._send_due_checkins()
+
+        self.assertEqual(sent, [])
 
     def test_tools_create_list_and_cancel_without_writing_sql(self) -> None:
         tools = ReminderTools(
