@@ -288,7 +288,7 @@ text = random.choice(checkin_messages)
 → ReminderTools._list() 查询 SQLite
 → 返回任务 JSON
 → 模型第二次请求读取工具结果
-→ 按爱丽丝的任务日志口吻回复
+→ 按安洁莉娜信使助理口吻回复
 ```
 
 工具结果包括 `id`、`content`、`type/type_label`、`run_at/schedule_text`、`repeat` 和 `status`。其中 `presentation_hint` 要求模型保持这些事实准确，同时避免机械朗读字段。因此“查询任务”这一轮通常包含模型工具调用前后的两次模型请求，但任务数据来自 SQLite。
