@@ -8,7 +8,11 @@
 
 ## wechat开放第三方接口，可通过openclaw-weixin直接接入
 
-当前版本位于 `ilink_catgirl/`，直接使用 iLink 协议，更加轻量，无需安装 AstrBot 或 OpenClaw。Windows 双击 `start.bat` 运行，双击 `打包程序.bat` 只打包当前轻量版；Ubuntu 安装 `requirements.txt` 后运行 `main.py`。PyInstaller 只能为当前操作系统构建，Windows 成品不能放到 Linux 直接运行。助手人格可在根目录 `聊天助手.txt` 中定义。
+当前版本位于 `ilink_catgirl/`，直接使用 iLink 协议，更加轻量，无需安装 AstrBot 或 OpenClaw。  
+
+## 项目使用
+
+Windows或Ubuntu 安装 `ilink_catgirl/requirements.txt`中的依赖后运行 `main.py`。PyInstaller 只能为当前操作系统构建，Windows 成品不能放到 Linux 直接运行。助手人格可在根目录 `聊天助手.txt` 中定义。
 
 历史代码的分类和用途见 `历史版本归档/README.md`。
 
@@ -22,3 +26,35 @@ quit
 
 .env.example中含有配置示例，输入相关api后将本目录重命名为.env即可使用，初期均使用低价api即可<br>
 (我使用的是和风天气的api,模型使用的是deepseek-v4-flash)
+
+## 当前MCP
+
+天气查询功能，联网搜索功能，同时本地建立数据库，支持设置每日任务，到时间后自动在微信发送消息提醒。
+
+运行前请先阅读.env.example中的api需求，输入自己的api-key以调用mcp。
+
+## 自定义功能
+
+ilink_catgirl中，定时提醒开场白，主动问候语.txt,以及父文件夹下的聊天助手.txt，均支持自定义人物性格，替换prompt之后即可得到属于自己的轻量化微信助理。
+
+## 一些问题
+
+### 长期运行助理
+
+助理随命令行窗口的关闭而关闭，故其需要一个稳定的服务器长期运行  
+这里推荐阿里云的服务器，注册学生认证之后还可以免费获得300代金券，在购买页面购买一个轻量应用服务器，终端界面即可长期托管。
+
+### 服务器挂载
+
+虽然托管到服务器了，但如果离开服务器界面服务器依然会自动关闭cli，故我们还需要一个托管工具，在命令行中执行
+
+```linux
+
+apt install screen # 安装工具
+screen -S <名称> # 新建并命名一个可挂起的会话
+`Ctrl + A` 然后按 `d` 
+#此时界面上不会显示任何内容，无需担心，操作后会有[detached]的状态显示提醒
+
+```
+
+即可成功托管。托管的其他操作具体可参照文件夹下 `关于如何在远程服务器上持续运行.md`
