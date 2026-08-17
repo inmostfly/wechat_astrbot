@@ -1,9 +1,31 @@
+# Secrets and local environment
 .env
+.env.*
+!.env.example
+
+# Runtime data
 data/
 logs/
 *.png
+
+# Python cache and virtual environments
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+ENV/
+
+# PyInstaller output and bundled dependencies
+build/
+dist/
+_internal/
+*.egg-info/
+*.egg
+*.whl
 *.exe
 *.dll
 *.pyd
