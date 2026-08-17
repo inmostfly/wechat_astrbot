@@ -31,6 +31,12 @@ class ILinkPackagingTests(unittest.TestCase):
         self.assertGreaterEqual(len(messages), 1)
         self.assertFalse(any(message.startswith("1. ") for message in messages))
 
+    def test_message_resources_match_current_persona(self) -> None:
+        for filename in ("主动问候语.txt", "定时提醒开场白.txt"):
+            content = (ILINK_DIR / filename).read_text(encoding="utf-8")
+            self.assertIn("安洁", content)
+            self.assertNotIn("爱丽丝", content)
+
     def test_internal_weather_server_is_dispatched(self) -> None:
         runner = mock.Mock()
         fake_module = SimpleNamespace(run_server=runner)

@@ -196,7 +196,7 @@ class ReminderTests(unittest.TestCase):
         self.assertEqual(listed["count"], 1)
         self.assertEqual(listed["reminders"][0]["id"], reminder_id)
         self.assertEqual(listed["reminders"][0]["type_label"], "日常提醒任务")
-        self.assertIn("任务日志口吻", listed["presentation_hint"])
+        self.assertIn("安洁莉娜", listed["presentation_hint"])
 
         cancelled = json.loads(
             tools.call(self.user_id, "cancel_reminder", {"reminder_id": reminder_id})
@@ -321,7 +321,7 @@ class ReminderTests(unittest.TestCase):
             FakeLog(),
             threading.Event(),
             threading.RLock(),
-            reminder_intros=["邦邦咔邦！任务时间到啦！"],
+            reminder_intros=["Dr.风云飘飘，这份提醒已经送达。"],
             context_recorder=lambda user, text: context.append((user, text)),
         )
 
@@ -329,7 +329,7 @@ class ReminderTests(unittest.TestCase):
 
         self.assertEqual(
             sent,
-            ["邦邦咔邦！任务时间到啦！\n测试提醒"],
+            ["Dr.风云飘飘，这份提醒已经送达。\n测试提醒"],
         )
         self.assertNotIn("1. 测试提醒", sent[0])
         self.assertEqual(context, [(self.user_id, sent[0])])

@@ -93,7 +93,7 @@ def load_checkin_messages() -> list[str]:
 
     return load_message_lines(
         "主动问候语.txt",
-        "老师，今日通讯任务已经刷新。回复一句话，就可以让我们的频道继续保持在线！",
+        "Dr.风云飘飘，安洁来确认今天的联络状态。方便时回复一句，让这条通讯继续保持畅通吧。",
     )
 
 
@@ -102,7 +102,7 @@ def load_reminder_intros() -> list[str]:
 
     return load_message_lines(
         "定时提醒开场白.txt",
-        "邦邦咔邦！老师，任务计时器响啦——爱丽丝来递交最新任务情报！",
+        "Dr.风云飘飘，时间到了。这份提醒安洁已经准时送达，请查收。",
     )
 
 
