@@ -1,5 +1,6 @@
 httpx>=0.27,<1
 openai>=1.0,<3
 python-dotenv>=1.0,<2
+cryptography>=41,<48
 mcp[cli]>=1.27,<2
 qrcode[pil]>=7.4,<9

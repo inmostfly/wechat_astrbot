@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections import defaultdict
 import json
 import os
@@ -26,13 +27,14 @@ from reminders import (
 
 from weixin_ilink import (
     DEFAULT_BASE_URL,
+    DownloadedImage,
     ILinkClient,
     ILinkError,
     ILinkSession,
     LoginExpiredError,
     RecentMessageKeys,
     SessionStore,
-    extract_inbound_text,
+    extract_inbound_message,
 )
 
 
@@ -134,6 +136,9 @@ class ReplyEngine:
         if not api_key:
             raise RuntimeError("缺少 API_KEY_2；请配置父目录或本目录的 .env")
         self.model = os.getenv("MODEL_2", "deepseek-v4-flash").strip()
+        self.vision_model = os.getenv(
+            "VISION_MODEL_2", "deepseek-v4-flash-vision-exp"
+        ).strip()
         self.client = OpenAI(
             api_key=api_key,
             base_url=os.getenv("API_URL_2") or None,
@@ -208,9 +213,15 @@ class ReplyEngine:
             return
         memory[1:] = memory[-self.max_history :]
 
-    def reply(self, user_id: str, text: str) -> str:
+    def reply(
+        self,
+        user_id: str,
+        text: str,
+        *,
+        images: list[DownloadedImage] | None = None,
+    ) -> str:
         with self.memory_lock:
-            return self._reply_locked(user_id, text)
+            return self._reply_locked(user_id, text, images=images or [])
 
     def record_assistant_context(self, user_id: str, text: str) -> None:
         """Remember a message sent without the model so replies keep their context."""
@@ -220,25 +231,68 @@ class ReplyEngine:
             memory.append({"role": "assistant", "content": text})
             self._trim(memory)
 
-    def _reply_locked(self, user_id: str, text: str) -> str:
+    def _reply_locked(
+        self,
+        user_id: str,
+        text: str,
+        *,
+        images: list[DownloadedImage],
+    ) -> str:
         self.active_user_id = user_id
         memory = self.memories[user_id]
+        if images:
+            return self._reply_with_images(memory, text, images)
         memory.append({"role": "user", "content": text})
         self._trim(memory)
+        return self._complete(memory, self.model)
+
+    def _reply_with_images(
+        self,
+        memory: list[dict[str, Any]],
+        text: str,
+        images: list[DownloadedImage],
+    ) -> str:
+        """Use images for this request without retaining image bytes in chat history."""
+
+        prompt = text.strip() or (
+            "请识别并分析我发送的图片，说明其中最重要的内容；"
+            "如果图片包含文字，请准确读取，不确定的地方要明确说明。"
+        )
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for image in images:
+            encoded = base64.b64encode(image.data).decode("ascii")
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{image.mime_type};base64,{encoded}"
+                    },
+                }
+            )
+        transient_messages = [*memory, {"role": "user", "content": content}]
+        answer = self._complete(transient_messages, self.vision_model)
+
+        history_text = text.strip() or f"[用户发送了{len(images)}张图片并请求识别]"
+        memory.append({"role": "user", "content": history_text})
+        memory.append({"role": "assistant", "content": answer})
+        self._trim(memory)
+        return answer
+
+    def _complete(self, messages: list[dict[str, Any]], model: str) -> str:
         request_options: dict[str, Any] = {}
         if self.tools:
             request_options.update(tools=self.tools, tool_choice="auto")
 
         for _ in range(8):
             response = self.client.chat.completions.create(
-                model=self.model,
-                messages=memory,
+                model=model,
+                messages=messages,
                 **request_options,
             )
             message = response.choices[0].message
-            memory.append(message.model_dump(exclude_none=True))
+            messages.append(message.model_dump(exclude_none=True))
             if not message.tool_calls:
-                self._trim(memory)
+                self._trim(messages)
                 return message.content or "我暂时没有想到合适的回答。"
 
             for tool_call in message.tool_calls:
@@ -253,7 +307,7 @@ class ReplyEngine:
                 except Exception as error:
                     result = json.dumps({"error": str(error)}, ensure_ascii=False)
                 self.chat_log.tool(name, raw_arguments, result)
-                memory.append(
+                messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -321,6 +375,11 @@ def run_bot() -> None:
         skip_initial = env_bool("ILINK_SKIP_INITIAL_MESSAGES", True)
         first_poll_without_cursor = not bool(session.get_updates_buf)
         max_reply_chars = max(100, int(os.getenv("ILINK_MAX_REPLY_CHARS", "1800")))
+        max_images = max(1, int(os.getenv("ILINK_MAX_IMAGES_PER_MESSAGE", "4")))
+        max_image_bytes = max(
+            1024,
+            int(os.getenv("ILINK_MAX_IMAGE_BYTES", str(10 * 1024 * 1024))),
+        )
         send_lock = threading.RLock()
         reminder_scheduler = ReminderScheduler(
             reminder_store,
@@ -368,7 +427,7 @@ def run_bot() -> None:
 
                 if first_poll_without_cursor and skip_initial:
                     for raw in raw_messages:
-                        inbound = extract_inbound_text(raw)
+                        inbound = extract_inbound_message(raw)
                         if inbound:
                             recent.add(inbound.key)
                     chat_log.system(
@@ -376,7 +435,7 @@ def run_bot() -> None:
                     )
                 else:
                     for raw in raw_messages:
-                        inbound = extract_inbound_text(raw)
+                        inbound = extract_inbound_message(raw)
                         if inbound is None or recent.contains(inbound.key):
                             continue
 
@@ -387,9 +446,33 @@ def run_bot() -> None:
                             if inbound.create_time_ms > 0
                             else None,
                         )
-                        chat_log.user(f"[{inbound.from_user_id}] {inbound.text}")
+                        log_text = inbound.text or "[无附言]"
+                        if inbound.images:
+                            log_text += f" [图片×{len(inbound.images)}]"
+                        chat_log.user(f"[{inbound.from_user_id}] {log_text}")
                         try:
-                            answer = engine.reply(inbound.from_user_id, inbound.text)
+                            if len(inbound.images) > max_images:
+                                raise ILinkError(
+                                    f"一条消息最多处理 {max_images} 张图片，"
+                                    f"本次收到 {len(inbound.images)} 张"
+                                )
+                            downloaded_images = [
+                                client.download_image(
+                                    image,
+                                    max_bytes=max_image_bytes,
+                                )
+                                for image in inbound.images
+                            ]
+                            answer = engine.reply(
+                                inbound.from_user_id,
+                                inbound.text,
+                                images=downloaded_images,
+                            )
+                        except ILinkError as error:
+                            chat_log.error(
+                                f"图片处理失败 [{inbound.from_user_id}]：{error}"
+                            )
+                            answer = f"抱歉，这张图片暂时无法处理：{error}"
                         except Exception as error:
                             chat_log.error(
                                 f"生成回复失败 [{inbound.from_user_id}]：{error}\n"

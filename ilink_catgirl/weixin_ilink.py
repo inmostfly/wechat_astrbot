@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from collections import deque
 from dataclasses import asdict, dataclass, field
 import hashlib
@@ -12,10 +13,12 @@ import random
 import re
 import time
 from typing import Any, Iterable
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin, urlparse
 from uuid import uuid4
 
 import httpx
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
 DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
@@ -24,6 +27,7 @@ CHANNEL_VERSION = "2.4.6"
 ILINK_APP_ID = "bot"
 ILINK_APP_CLIENT_VERSION = "132102"
 BOT_AGENT = "CatgirlLite/0.1.0"
+WEIXIN_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
 
 
 class ILinkError(RuntimeError):
@@ -64,13 +68,85 @@ class ILinkSession:
 
 
 @dataclass(frozen=True)
-class InboundText:
+class InboundImage:
+    encrypt_query_param: str = ""
+    aes_key: str = ""
+    direct_url: str = ""
+    encrypt_type: int = 0
+    expected_size: int = 0
+
+
+@dataclass(frozen=True)
+class DownloadedImage:
+    data: bytes
+    mime_type: str
+
+
+@dataclass(frozen=True)
+class InboundMessage:
     key: str
     from_user_id: str
     text: str
     context_token: str
     message_id: str
     create_time_ms: int
+    images: tuple[InboundImage, ...] = ()
+
+
+# Keep the old public name for code that imported it before image support existed.
+InboundText = InboundMessage
+
+
+def decode_weixin_aes_key(value: str) -> bytes:
+    """Accept the AES key encodings observed in inbound iLink media."""
+
+    encoded = value.strip()
+    if re.fullmatch(r"[0-9a-fA-F]{32}", encoded):
+        return bytes.fromhex(encoded)
+    try:
+        decoded = base64.b64decode(
+            encoded + "=" * (-len(encoded) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (ValueError, binascii.Error) as error:
+        raise ILinkError("微信图片的 AES 密钥编码无效") from error
+    if len(decoded) == 16:
+        return decoded
+    if len(decoded) == 32 and re.fullmatch(rb"[0-9a-fA-F]{32}", decoded):
+        return bytes.fromhex(decoded.decode("ascii"))
+    raise ILinkError("微信图片的 AES 密钥长度无效")
+
+
+def decrypt_weixin_media(ciphertext: bytes, aes_key: str) -> bytes:
+    """Decrypt AES-128-ECB media and remove PKCS#7 padding."""
+
+    if not ciphertext or len(ciphertext) % 16:
+        raise ILinkError("微信图片密文长度无效")
+    try:
+        decryptor = Cipher(
+            algorithms.AES(decode_weixin_aes_key(aes_key)),
+            modes.ECB(),
+        ).decryptor()
+        padded = decryptor.update(ciphertext) + decryptor.finalize()
+        unpadder = padding.PKCS7(128).unpadder()
+        return unpadder.update(padded) + unpadder.finalize()
+    except ValueError as error:
+        raise ILinkError("微信图片解密失败，AES 密钥或填充不正确") from error
+
+
+def detect_image_mime(data: bytes) -> str:
+    """Return a DeepSeek-supported image MIME type from magic bytes."""
+
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    raise ILinkError("微信图片格式不受识图模型支持，仅支持 JPEG、PNG、GIF、WebP")
 
 
 class SessionStore:
@@ -352,6 +428,69 @@ class ILinkClient:
                 f"{endpoint} 失败：ret={ret}，{response.get('errmsg') or '无说明'}"
             )
 
+    @staticmethod
+    def _image_download_url(image: InboundImage) -> str:
+        if image.encrypt_query_param:
+            return (
+                f"{WEIXIN_CDN_BASE_URL}/download?"
+                + urlencode({"encrypted_query_param": image.encrypt_query_param})
+            )
+        parsed = urlparse(image.direct_url)
+        hostname = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not (
+            hostname == "cdn.weixin.qq.com"
+            or hostname.endswith(".cdn.weixin.qq.com")
+        ):
+            raise ILinkError("微信图片下载地址不是受信任的 HTTPS CDN")
+        return image.direct_url
+
+    def download_image(
+        self,
+        image: InboundImage,
+        *,
+        max_bytes: int = 10 * 1024 * 1024,
+    ) -> DownloadedImage:
+        """Download and decrypt one inbound image entirely in memory."""
+
+        max_bytes = max(1024, int(max_bytes))
+        if image.expected_size > max_bytes + 16:
+            raise ILinkError(
+                f"微信图片超过识图大小限制（最大 {max_bytes // 1024 // 1024} MiB）"
+            )
+        url = self._image_download_url(image)
+        download_limit = max_bytes + 16
+        encrypted = bytearray()
+        try:
+            with self.http.stream("GET", url, timeout=30) as response:
+                response.raise_for_status()
+                content_length = int(response.headers.get("Content-Length") or 0)
+                if content_length > download_limit:
+                    raise ILinkError("微信图片下载内容超过大小限制")
+                for chunk in response.iter_bytes():
+                    encrypted.extend(chunk)
+                    if len(encrypted) > download_limit:
+                        raise ILinkError("微信图片下载内容超过大小限制")
+        except httpx.TimeoutException as error:
+            raise ILinkError("微信图片 CDN 下载超时") from error
+        except httpx.HTTPStatusError as error:
+            raise ILinkError(
+                f"微信图片 CDN 返回 HTTP {error.response.status_code}"
+            ) from error
+        except httpx.HTTPError as error:
+            raise ILinkError(f"微信图片 CDN 下载失败：{error}") from error
+
+        if not encrypted:
+            raise ILinkError("微信图片 CDN 返回了空内容")
+        if image.aes_key:
+            plaintext = decrypt_weixin_media(bytes(encrypted), image.aes_key)
+        elif image.encrypt_type == 1 or image.encrypt_query_param:
+            raise ILinkError("微信图片缺少 AES 解密密钥")
+        else:
+            plaintext = bytes(encrypted)
+        if len(plaintext) > max_bytes:
+            raise ILinkError("微信图片解密后超过大小限制")
+        return DownloadedImage(data=plaintext, mime_type=detect_image_mime(plaintext))
+
     def send_text(
         self,
         to_user_id: str,
@@ -417,8 +556,67 @@ class ILinkClient:
             yield remaining
 
 
-def extract_inbound_text(message: dict[str, Any]) -> InboundText | None:
-    """Accept only completed/new user text; bot messages can never trigger replies."""
+def _mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _first_string(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _extract_inbound_image(item: dict[str, Any]) -> InboundImage | None:
+    image_item = _mapping(item.get("image_item"))
+    if not image_item:
+        return None
+    media = _mapping(image_item.get("media"))
+    encrypt_query_param = _first_string(
+        media.get("encrypt_query_param"),
+        image_item.get("encrypt_query_param"),
+    )
+    direct_url = _first_string(
+        media.get("url"),
+        media.get("full_url"),
+        media.get("download_url"),
+        image_item.get("url"),
+    )
+    if not encrypt_query_param and not direct_url:
+        return None
+    aes_key = _first_string(
+        image_item.get("aeskey"),
+        image_item.get("aes_key"),
+        media.get("aes_key"),
+        media.get("aeskey"),
+    )
+    expected_size = 0
+    for value in (
+        image_item.get("hd_size"),
+        image_item.get("mid_size"),
+        image_item.get("raw_size"),
+        media.get("size"),
+    ):
+        try:
+            expected_size = max(expected_size, int(value or 0))
+        except (TypeError, ValueError):
+            pass
+    try:
+        encrypt_type = int(media.get("encrypt_type") or 0)
+    except (TypeError, ValueError):
+        encrypt_type = 0
+    return InboundImage(
+        encrypt_query_param=encrypt_query_param,
+        aes_key=aes_key,
+        direct_url=direct_url,
+        encrypt_type=encrypt_type,
+        expected_size=expected_size,
+    )
+
+
+def extract_inbound_message(message: dict[str, Any]) -> InboundMessage | None:
+    """Accept completed/new user text and images; bot messages never trigger replies."""
 
     if int(message.get("message_type") or 0) != 1:
         return None
@@ -430,30 +628,55 @@ def extract_inbound_text(message: dict[str, Any]) -> InboundText | None:
         return None
 
     text_parts: list[str] = []
+    images: list[InboundImage] = []
     for item in message.get("item_list") or []:
-        if int(item.get("type") or 0) != 1:
+        if not isinstance(item, dict):
             continue
-        text = str((item.get("text_item") or {}).get("text") or "").strip()
-        if text:
-            text_parts.append(text)
+        item_type = int(item.get("type") or 0)
+        if item_type == 1 or item.get("text_item"):
+            text = str((item.get("text_item") or {}).get("text") or "").strip()
+            if text:
+                text_parts.append(text)
+        if item_type == 2 or item.get("image_item"):
+            image = _extract_inbound_image(item)
+            if image is not None:
+                images.append(image)
     text = "\n".join(text_parts).strip()
-    if not text:
+    if not text and not images:
         return None
 
     message_id = str(message.get("message_id") or "")
     create_time_ms = int(message.get("create_time_ms") or 0)
+    image_fingerprints = [
+        image.encrypt_query_param or image.direct_url for image in images
+    ]
     stable_source = "|".join(
-        [message_id, from_user_id, str(create_time_ms), context_token, text]
+        [
+            message_id,
+            from_user_id,
+            str(create_time_ms),
+            context_token,
+            text,
+            *image_fingerprints,
+        ]
     )
     key = hashlib.sha256(stable_source.encode("utf-8")).hexdigest()
-    return InboundText(
+    return InboundMessage(
         key=key,
         from_user_id=from_user_id,
         text=text,
         context_token=context_token,
         message_id=message_id,
         create_time_ms=create_time_ms,
+        images=tuple(images),
     )
+
+
+def extract_inbound_text(message: dict[str, Any]) -> InboundText | None:
+    """Compatibility helper that keeps the former text-only behavior."""
+
+    inbound = extract_inbound_message(message)
+    return inbound if inbound is not None and inbound.text else None
 
 
 class RecentMessageKeys:

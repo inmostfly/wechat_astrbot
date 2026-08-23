@@ -73,6 +73,15 @@ class ILinkPackagingTests(unittest.TestCase):
         self.assertIn('"weather_mcp_server"', spec)
         self.assertIn('"web_mcp_server"', spec)
 
+    def test_vision_model_and_crypto_dependency_are_packaged(self) -> None:
+        environment = (ILINK_DIR / ".env.example").read_text(encoding="utf-8")
+        requirements = (ILINK_DIR / "requirements.txt").read_text(encoding="utf-8")
+        self.assertIn(
+            "VISION_MODEL_2=deepseek-v4-flash-vision-exp",
+            environment,
+        )
+        self.assertIn("cryptography", requirements)
+
 
 if __name__ == "__main__":
     unittest.main()
