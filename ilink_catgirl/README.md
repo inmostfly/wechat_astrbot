@@ -43,6 +43,8 @@ Windows 需要生成独立成品时，双击 `打包程序.bat`。脚本会安�
 ilink_catgirl/dist/Catgirl微信机器人/Catgirl微信机器人.exe
 ```
 
+成品是 onedir 目录，部署时必须携带整个 `Catgirl微信机器人` 文件夹，不能只复制 EXE；依赖都在同目录 `_internal` 中，目标电脑无需安装 Python。具体配置、扫码、日常使用、迁移和排错步骤见成品目录中的 `EXE使用说明.txt`。
+
 该成品只包含当前 iLink 轻量版、完整 MCP 包、天气/联网 MCP、日志模块以及必需的文本资源，不包含已经放弃的 `UIA/`、`wxauto/`、`pywinauto` 或 `comtypes`。PyInstaller 不能跨系统打包：Windows 构建得到 EXE；Ubuntu 应直接运行 Python，或在 Ubuntu 上执行同一份 spec 生成 Linux 可执行文件。
 
 程序优先复用父目录 `catgirl/.env`，本目录的 `.env` 只用于覆盖。第一次运行会生成二维码图片 `data/weixin-login.png` 和备用扫码链接；扫码确认后才会开始收发消息。

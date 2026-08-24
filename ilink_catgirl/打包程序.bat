@@ -32,6 +32,7 @@ copy /Y "README.md" "%CATGIRL_OUTPUT%\README.md" >nul
 copy /Y "SQLite定时提醒技术文档.md" "%CATGIRL_OUTPUT%\SQLite定时提醒技术文档.md" >nul
 copy /Y "独立机器人轻量客户端技术文档.md" "%CATGIRL_OUTPUT%\独立机器人轻量客户端技术文档.md" >nul
 copy /Y "THIRD_PARTY_NOTICES.md" "%CATGIRL_OUTPUT%\THIRD_PARTY_NOTICES.md" >nul
+copy /Y "EXE使用说明.txt" "%CATGIRL_OUTPUT%\EXE使用说明.txt" >nul
 
 if exist ".env" (
     copy /Y ".env" "%CATGIRL_OUTPUT%\.env" >nul
@@ -46,6 +47,7 @@ if exist ".env" (
 echo 注意：.env 和 data\session.json 包含密钥或登录凭据，不要公开分享。
 echo.
 echo 打包完成：%CATGIRL_OUTPUT%\Catgirl微信机器人.exe
+echo 使用前请阅读：%CATGIRL_OUTPUT%\EXE使用说明.txt
 pause
 exit /b 0
 

@@ -38,6 +38,13 @@ class ILinkPackagingTests(unittest.TestCase):
             self.assertIn("安洁", content)
             self.assertNotIn("爱丽丝", content)
 
+    def test_exe_guide_is_copied_next_to_output(self) -> None:
+        guide = (ILINK_DIR / "EXE使用说明.txt").read_text(encoding="utf-8")
+        build_script = (ILINK_DIR / "打包程序.bat").read_text(encoding="utf-8")
+        self.assertIn("不能只拿走 Catgirl微信机器人.exe", guide)
+        self.assertIn("_internal", guide)
+        self.assertIn('copy /Y "EXE使用说明.txt"', build_script)
+
     def test_internal_weather_server_is_dispatched(self) -> None:
         runner = mock.Mock()
         fake_module = SimpleNamespace(run_server=runner)

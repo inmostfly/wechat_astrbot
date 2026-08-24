@@ -1,0 +1,100 @@
+Catgirl 微信机器人 EXE 使用说明
+================================
+
+一、成品必须如何携带
+
+本程序使用 PyInstaller onedir 方式打包。请复制或移动完整的“Catgirl微信机器人”文件夹，不能只拿走 Catgirl微信机器人.exe。
+
+成品目录至少应保留：
+
+Catgirl微信机器人\
+├─ Catgirl微信机器人.exe
+├─ _internal\                 程序依赖，不能删除
+├─ .env                       个人 API 配置；可能需要自己创建
+├─ .env.example               配置模板
+├─ 聊天助手.txt               助手人格
+├─ 主动问候语.txt
+├─ 定时提醒开场白.txt
+└─ EXE使用说明.txt
+
+接收方不需要安装 Python，也不需要另外执行 pip install。Python 运行时和第三方依赖都在 _internal 文件夹中。
+
+本次成品是在 64 位 Windows 环境构建的，建议在 64 位 Windows 10/11 使用。Windows 7 不属于保证兼容的目标系统。Ubuntu/Linux 不能运行这个 EXE，应使用项目源码和 Linux Python 环境。
+
+
+二、第一次使用
+
+1. 确认 Catgirl微信机器人.exe、_internal 和上述文本文件仍在同一文件夹层级。
+2. 如果目录中没有 .env，请复制 .env.example，并把副本重命名为 .env。
+3. 用记事本编辑 .env，至少填写：
+
+   API_KEY_2=你的模型API密钥
+   API_URL_2=https://api.deepseek.com
+   MODEL_2=deepseek-v4-flash
+   VISION_MODEL_2=deepseek-v4-flash-vision-exp
+
+4. 天气查询还需要填写 QWEATHER_API_KEY 和 QWEATHER_API_HOST。
+5. 联网搜索可填写 TAVILY_API_KEY，或者填写自建的 SEARXNG_URL。
+6. 双击 Catgirl微信机器人.exe。第一次运行会生成 data\weixin-login.png，并在控制台显示备用扫码链接。
+7. 使用手机微信扫码并确认。成功后登录状态保存在 data\session.json，下次通常无需重新扫码。
+
+注意：.env 和 data\session.json 都含敏感信息，不能上传到公开仓库或发送给他人。
+
+
+三、日常使用
+
+保持控制台窗口运行，机器人才能在线。
+
+- 普通聊天：直接在微信发送文字。
+- 天气：例如“查询河南省邓州市未来3天天气”。
+- 联网：例如“联网搜索某个内容”，或直接发送公开网址。
+- 图片识别：直接发送 JPEG、PNG、GIF 或 WebP 图片。
+- 文档阅读：直接发送 PDF、DOCX、XLSX、XLSM、PPTX、TXT、Markdown、CSV、JSON、XML、YAML、HTML 等文件。
+- 文档追问：文件得到首次摘要后，可继续问“第三章讲了什么”“表格里最高分是谁”等问题。
+- 提醒：例如“10分钟后提醒我休息”“每天7点30分发送邓州天气”。
+
+扫描版 PDF 如果没有文字层，目前不能自动 OCR。旧式 .doc、.xls、.ppt 应先转换为 .docx、.xlsx、.pptx。
+
+
+四、安全停止
+
+在控制台输入以下任意命令后按回车：
+
+quit
+exit
+stop
+退出
+停止
+
+程序会保存游标并安全下线。尽量不要直接关闭窗口或强制结束进程。
+
+
+五、运行数据和故障排查
+
+程序会在 EXE 同目录生成：
+
+- data\session.json：微信登录状态、消息游标和去重信息。
+- data\reminders.sqlite3：提醒任务数据库。
+- logs\chat_日期_时间.log：本次聊天与工具调用日志。
+- logs\crash_日期_时间.log：未处理致命错误的完整堆栈。
+
+如果启动后报错：
+
+1. 不要删除 _internal。
+2. 检查 .env 是否存在、API_KEY_2 是否正确。
+3. 查看窗口最后一行和 logs\crash_*.log。
+4. 文档读取失败时，先检查格式、大小、是否加密，以及 PDF 是否只有扫描图片。
+5. 登录失效时备份日志，然后删除或移走 data\session.json，重新启动并扫码。
+
+Windows 遇到致命错误时，程序默认会等待按回车关闭窗口，避免错误信息一闪而过。可在 .env 使用 PAUSE_ON_ERROR=false 关闭等待。
+
+
+六、迁移与分享
+
+- 迁移到另一台 Windows 电脑：复制整个“Catgirl微信机器人”文件夹。
+- 保留原登录和提醒：同时复制 data 文件夹，并妥善保护其中的凭据和数据库。
+- 不保留原登录：发送前删除 data 文件夹，让使用者重新扫码。
+- 分享给别人：必须先删除 .env、data 和 logs，避免泄露 API Key、微信登录态和聊天内容。
+- 更新版本：先备份 .env 和 data，再用新版完整成品替换程序文件，最后把个人 .env 和 data 放回成品目录。
+
+完整原理和服务器部署说明可查看同目录 README.md 与“独立机器人轻量客户端技术文档.md”。
