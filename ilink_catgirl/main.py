@@ -61,13 +61,23 @@ def run_internal_server() -> bool:
 
         run_server()
         return True
+    if "--document-mcp-server" in arguments:
+        from document_mcp_server import run_server
+
+        run_server()
+        return True
     return False
 
 
 def main() -> int:
     configure_console()
     internal_server = any(
-        argument in {"--weather-mcp-server", "--web-mcp-server"}
+        argument
+        in {
+            "--weather-mcp-server",
+            "--web-mcp-server",
+            "--document-mcp-server",
+        }
         for argument in sys.argv[1:]
     )
     try:
