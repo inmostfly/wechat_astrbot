@@ -50,9 +50,10 @@ PARENT_PROJECT_DIR = PROJECT_DIR if FROZEN else PROJECT_DIR.parent
 
 
 def resource_path(name: str) -> Path:
-    """Prefer editable files beside the executable, then bundled resources."""
+    """Prefer user-editable files, then legacy and bundled resources."""
 
     candidates = (
+        PROJECT_DIR / "用户自定义" / name,
         PROJECT_DIR / name,
         BUNDLE_DIR / name,
         PARENT_PROJECT_DIR / name,

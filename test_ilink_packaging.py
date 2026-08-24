@@ -43,7 +43,19 @@ class ILinkPackagingTests(unittest.TestCase):
         build_script = (ILINK_DIR / "打包程序.bat").read_text(encoding="utf-8")
         self.assertIn("不能只拿走 Catgirl微信机器人.exe", guide)
         self.assertIn("_internal", guide)
+        self.assertIn("用户自定义", guide)
+        self.assertIn("退出并重新启动 EXE", guide)
         self.assertIn('copy /Y "EXE使用说明.txt"', build_script)
+
+    def test_editable_resources_are_preferred_and_packaged_separately(self) -> None:
+        editable = bot.PROJECT_DIR / "用户自定义" / "聊天助手.txt"
+        candidates = bot.resource_path.__doc__ or ""
+        source = (ILINK_DIR / "bot.py").read_text(encoding="utf-8")
+        build_script = (ILINK_DIR / "打包程序.bat").read_text(encoding="utf-8")
+        self.assertIn("user-editable", candidates)
+        self.assertIn('PROJECT_DIR / "用户自定义" / name', source)
+        self.assertIn("用户自定义\\聊天助手.txt", build_script)
+        self.assertEqual(editable.parent.name, "用户自定义")
 
     def test_internal_weather_server_is_dispatched(self) -> None:
         runner = mock.Mock()

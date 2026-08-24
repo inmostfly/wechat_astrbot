@@ -24,9 +24,10 @@ echo 正在打包，请稍候...
 if errorlevel 1 goto :failed
 
 set "CATGIRL_OUTPUT=dist\Catgirl微信机器人"
-copy /Y "主动问候语.txt" "%CATGIRL_OUTPUT%\主动问候语.txt" >nul
-copy /Y "定时提醒开场白.txt" "%CATGIRL_OUTPUT%\定时提醒开场白.txt" >nul
-copy /Y "..\聊天助手.txt" "%CATGIRL_OUTPUT%\聊天助手.txt" >nul
+if not exist "%CATGIRL_OUTPUT%\用户自定义" mkdir "%CATGIRL_OUTPUT%\用户自定义"
+copy /Y "主动问候语.txt" "%CATGIRL_OUTPUT%\用户自定义\主动问候语.txt" >nul
+copy /Y "定时提醒开场白.txt" "%CATGIRL_OUTPUT%\用户自定义\定时提醒开场白.txt" >nul
+copy /Y "..\聊天助手.txt" "%CATGIRL_OUTPUT%\用户自定义\聊天助手.txt" >nul
 copy /Y ".env.example" "%CATGIRL_OUTPUT%\.env.example" >nul
 copy /Y "README.md" "%CATGIRL_OUTPUT%\README.md" >nul
 copy /Y "SQLite定时提醒技术文档.md" "%CATGIRL_OUTPUT%\SQLite定时提醒技术文档.md" >nul
