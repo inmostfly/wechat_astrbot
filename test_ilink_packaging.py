@@ -16,6 +16,7 @@ if str(ILINK_DIR) not in sys.path:
 
 import main as ilink_main
 import bot
+import document_mcp_client
 import weather_mcp_client
 import web_mcp_client
 
@@ -53,16 +54,27 @@ class ILinkPackagingTests(unittest.TestCase):
                 self.assertTrue(ilink_main.run_internal_server())
         runner.assert_called_once_with()
 
+    def test_internal_document_server_is_dispatched(self) -> None:
+        runner = mock.Mock()
+        fake_module = SimpleNamespace(run_server=runner)
+        with mock.patch.object(sys, "argv", ["catgirl.exe", "--document-mcp-server"]):
+            with mock.patch.dict(sys.modules, {"document_mcp_server": fake_module}):
+                self.assertTrue(ilink_main.run_internal_server())
+        runner.assert_called_once_with()
+
     def test_frozen_clients_restart_same_executable_as_mcp_server(self) -> None:
         executable = str(PROJECT_DIR / "Catgirl微信机器人.exe")
         with mock.patch.object(sys, "frozen", True, create=True):
             with mock.patch.object(sys, "executable", executable):
                 weather = weather_mcp_client.server_parameters()
                 web = web_mcp_client.server_parameters()
+                document = document_mcp_client.server_parameters()
         self.assertEqual(weather.command, executable)
         self.assertEqual(weather.args, ["--weather-mcp-server"])
         self.assertEqual(web.command, executable)
         self.assertEqual(web.args, ["--web-mcp-server"])
+        self.assertEqual(document.command, executable)
+        self.assertEqual(document.args, ["--document-mcp-server"])
 
     def test_lightweight_spec_does_not_include_abandoned_uia(self) -> None:
         spec = (ILINK_DIR / "ilink_catgirl.spec").read_text(encoding="utf-8")
@@ -72,6 +84,7 @@ class ILinkPackagingTests(unittest.TestCase):
         self.assertIn('"定时提醒开场白.txt"', spec)
         self.assertIn('"weather_mcp_server"', spec)
         self.assertIn('"web_mcp_server"', spec)
+        self.assertIn('"document_mcp_server"', spec)
 
     def test_vision_model_and_crypto_dependency_are_packaged(self) -> None:
         environment = (ILINK_DIR / ".env.example").read_text(encoding="utf-8")
@@ -81,6 +94,10 @@ class ILinkPackagingTests(unittest.TestCase):
             environment,
         )
         self.assertIn("cryptography", requirements)
+        self.assertIn("pypdf", requirements)
+        self.assertIn("python-docx", requirements)
+        self.assertIn("openpyxl", requirements)
+        self.assertIn("python-pptx", requirements)
 
 
 if __name__ == "__main__":
