@@ -31,6 +31,19 @@ def server_parameters() -> StdioServerParameters:
     )
 
 
+async def _list_tools() -> list[str]:
+    with open(os.devnull, "w", encoding="utf-8") as errlog:
+        async with stdio_client(server_parameters(), errlog=errlog) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                response = await session.list_tools()
+                return [tool.name for tool in response.tools]
+
+
+def list_document_tools() -> list[str]:
+    return asyncio.run(_list_tools())
+
+
 async def _extract_document(
     filename: str,
     data: bytes,
