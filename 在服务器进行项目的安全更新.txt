@@ -1,0 +1,8 @@
+echo "myenv" >> .git/info/exclude
+首先忽略所创建的虚拟环境
+git restore .
+前提是你没有在服务器端进行其他修改
+git pull --ff-only origin main
+更新到远程的新提交
+
+另外需注意，由于被ignore忽略，env中的更新需要在服务器端手动重写
