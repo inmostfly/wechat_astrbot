@@ -83,6 +83,24 @@ class DownloadedImage:
 
 
 @dataclass(frozen=True)
+class InboundFile:
+    file_name: str
+    encrypt_query_param: str = ""
+    aes_key: str = ""
+    direct_url: str = ""
+    encrypt_type: int = 0
+    expected_size: int = 0
+    md5: str = ""
+
+
+@dataclass(frozen=True)
+class DownloadedFile:
+    file_name: str
+    data: bytes
+    md5: str = ""
+
+
+@dataclass(frozen=True)
 class InboundMessage:
     key: str
     from_user_id: str
@@ -91,6 +109,7 @@ class InboundMessage:
     message_id: str
     create_time_ms: int
     images: tuple[InboundImage, ...] = ()
+    files: tuple[InboundFile, ...] = ()
 
 
 # Keep the old public name for code that imported it before image support existed.
@@ -429,20 +448,74 @@ class ILinkClient:
             )
 
     @staticmethod
-    def _image_download_url(image: InboundImage) -> str:
-        if image.encrypt_query_param:
+    def _media_download_url(media: InboundImage | InboundFile) -> str:
+        if media.encrypt_query_param:
             return (
                 f"{WEIXIN_CDN_BASE_URL}/download?"
-                + urlencode({"encrypted_query_param": image.encrypt_query_param})
+                + urlencode({"encrypted_query_param": media.encrypt_query_param})
             )
-        parsed = urlparse(image.direct_url)
+        parsed = urlparse(media.direct_url)
         hostname = (parsed.hostname or "").lower()
         if parsed.scheme != "https" or not (
             hostname == "cdn.weixin.qq.com"
             or hostname.endswith(".cdn.weixin.qq.com")
         ):
             raise ILinkError("微信图片下载地址不是受信任的 HTTPS CDN")
-        return image.direct_url
+        return media.direct_url
+
+    @staticmethod
+    def _image_download_url(image: InboundImage) -> str:
+        """Compatibility wrapper retained for image-specific callers/tests."""
+
+        return ILinkClient._media_download_url(image)
+
+    def _download_media(
+        self,
+        media: InboundImage | InboundFile,
+        *,
+        max_bytes: int,
+        label: str,
+    ) -> bytes:
+        """Download and decrypt one trusted iLink CDN media object in memory."""
+
+        max_bytes = max(1024, int(max_bytes))
+        if media.expected_size > max_bytes:
+            raise ILinkError(
+                f"微信{label}超过处理大小限制（最大 {max_bytes // 1024 // 1024} MiB）"
+            )
+        url = self._media_download_url(media)
+        download_limit = max_bytes + 16
+        encrypted = bytearray()
+        try:
+            with self.http.stream("GET", url, timeout=30) as response:
+                response.raise_for_status()
+                content_length = int(response.headers.get("Content-Length") or 0)
+                if content_length > download_limit:
+                    raise ILinkError(f"微信{label}下载内容超过大小限制")
+                for chunk in response.iter_bytes():
+                    encrypted.extend(chunk)
+                    if len(encrypted) > download_limit:
+                        raise ILinkError(f"微信{label}下载内容超过大小限制")
+        except httpx.TimeoutException as error:
+            raise ILinkError(f"微信{label} CDN 下载超时") from error
+        except httpx.HTTPStatusError as error:
+            raise ILinkError(
+                f"微信{label} CDN 返回 HTTP {error.response.status_code}"
+            ) from error
+        except httpx.HTTPError as error:
+            raise ILinkError(f"微信{label} CDN 下载失败：{error}") from error
+
+        if not encrypted:
+            raise ILinkError(f"微信{label} CDN 返回了空内容")
+        if media.aes_key:
+            plaintext = decrypt_weixin_media(bytes(encrypted), media.aes_key)
+        elif media.encrypt_type == 1 or media.encrypt_query_param:
+            raise ILinkError(f"微信{label}缺少 AES 解密密钥")
+        else:
+            plaintext = bytes(encrypted)
+        if len(plaintext) > max_bytes:
+            raise ILinkError(f"微信{label}解密后超过大小限制")
+        return plaintext
 
     def download_image(
         self,
@@ -452,44 +525,27 @@ class ILinkClient:
     ) -> DownloadedImage:
         """Download and decrypt one inbound image entirely in memory."""
 
-        max_bytes = max(1024, int(max_bytes))
-        if image.expected_size > max_bytes + 16:
-            raise ILinkError(
-                f"微信图片超过识图大小限制（最大 {max_bytes // 1024 // 1024} MiB）"
-            )
-        url = self._image_download_url(image)
-        download_limit = max_bytes + 16
-        encrypted = bytearray()
-        try:
-            with self.http.stream("GET", url, timeout=30) as response:
-                response.raise_for_status()
-                content_length = int(response.headers.get("Content-Length") or 0)
-                if content_length > download_limit:
-                    raise ILinkError("微信图片下载内容超过大小限制")
-                for chunk in response.iter_bytes():
-                    encrypted.extend(chunk)
-                    if len(encrypted) > download_limit:
-                        raise ILinkError("微信图片下载内容超过大小限制")
-        except httpx.TimeoutException as error:
-            raise ILinkError("微信图片 CDN 下载超时") from error
-        except httpx.HTTPStatusError as error:
-            raise ILinkError(
-                f"微信图片 CDN 返回 HTTP {error.response.status_code}"
-            ) from error
-        except httpx.HTTPError as error:
-            raise ILinkError(f"微信图片 CDN 下载失败：{error}") from error
-
-        if not encrypted:
-            raise ILinkError("微信图片 CDN 返回了空内容")
-        if image.aes_key:
-            plaintext = decrypt_weixin_media(bytes(encrypted), image.aes_key)
-        elif image.encrypt_type == 1 or image.encrypt_query_param:
-            raise ILinkError("微信图片缺少 AES 解密密钥")
-        else:
-            plaintext = bytes(encrypted)
-        if len(plaintext) > max_bytes:
-            raise ILinkError("微信图片解密后超过大小限制")
+        plaintext = self._download_media(
+            image,
+            max_bytes=max_bytes,
+            label="图片",
+        )
         return DownloadedImage(data=plaintext, mime_type=detect_image_mime(plaintext))
+
+    def download_file(
+        self,
+        file: InboundFile,
+        *,
+        max_bytes: int = 15 * 1024 * 1024,
+    ) -> DownloadedFile:
+        """Download and decrypt an inbound document without writing it to disk."""
+
+        plaintext = self._download_media(
+            file,
+            max_bytes=max_bytes,
+            label="文件",
+        )
+        return DownloadedFile(file_name=file.file_name, data=plaintext, md5=file.md5)
 
     def send_text(
         self,
@@ -615,6 +671,54 @@ def _extract_inbound_image(item: dict[str, Any]) -> InboundImage | None:
     )
 
 
+def _safe_inbound_filename(value: Any) -> str:
+    name = str(value or "").replace("\\", "/").split("/")[-1]
+    name = re.sub(r"[\x00-\x1f\x7f]", "", name).strip()
+    return name[:255] or "未命名文件"
+
+
+def _extract_inbound_file(item: dict[str, Any]) -> InboundFile | None:
+    file_item = _mapping(item.get("file_item"))
+    if not file_item:
+        return None
+    media = _mapping(file_item.get("media"))
+    encrypt_query_param = _first_string(
+        media.get("encrypt_query_param"),
+        file_item.get("encrypt_query_param"),
+    )
+    direct_url = _first_string(
+        media.get("full_url"),
+        media.get("url"),
+        media.get("download_url"),
+        file_item.get("url"),
+    )
+    if not encrypt_query_param and not direct_url:
+        return None
+    aes_key = _first_string(
+        file_item.get("aeskey"),
+        file_item.get("aes_key"),
+        media.get("aes_key"),
+        media.get("aeskey"),
+    )
+    try:
+        expected_size = max(0, int(file_item.get("len") or media.get("size") or 0))
+    except (TypeError, ValueError):
+        expected_size = 0
+    try:
+        encrypt_type = int(media.get("encrypt_type") or 0)
+    except (TypeError, ValueError):
+        encrypt_type = 0
+    return InboundFile(
+        file_name=_safe_inbound_filename(file_item.get("file_name")),
+        encrypt_query_param=encrypt_query_param,
+        aes_key=aes_key,
+        direct_url=direct_url,
+        encrypt_type=encrypt_type,
+        expected_size=expected_size,
+        md5=_first_string(file_item.get("md5")),
+    )
+
+
 def extract_inbound_message(message: dict[str, Any]) -> InboundMessage | None:
     """Accept completed/new user text and images; bot messages never trigger replies."""
 
@@ -629,6 +733,7 @@ def extract_inbound_message(message: dict[str, Any]) -> InboundMessage | None:
 
     text_parts: list[str] = []
     images: list[InboundImage] = []
+    files: list[InboundFile] = []
     for item in message.get("item_list") or []:
         if not isinstance(item, dict):
             continue
@@ -641,14 +746,21 @@ def extract_inbound_message(message: dict[str, Any]) -> InboundMessage | None:
             image = _extract_inbound_image(item)
             if image is not None:
                 images.append(image)
+        if item_type == 4 or item.get("file_item"):
+            inbound_file = _extract_inbound_file(item)
+            if inbound_file is not None:
+                files.append(inbound_file)
     text = "\n".join(text_parts).strip()
-    if not text and not images:
+    if not text and not images and not files:
         return None
 
     message_id = str(message.get("message_id") or "")
     create_time_ms = int(message.get("create_time_ms") or 0)
     image_fingerprints = [
         image.encrypt_query_param or image.direct_url for image in images
+    ]
+    file_fingerprints = [
+        file.encrypt_query_param or file.direct_url for file in files
     ]
     stable_source = "|".join(
         [
@@ -658,6 +770,7 @@ def extract_inbound_message(message: dict[str, Any]) -> InboundMessage | None:
             context_token,
             text,
             *image_fingerprints,
+            *file_fingerprints,
         ]
     )
     key = hashlib.sha256(stable_source.encode("utf-8")).hexdigest()
@@ -669,6 +782,7 @@ def extract_inbound_message(message: dict[str, Any]) -> InboundMessage | None:
         message_id=message_id,
         create_time_ms=create_time_ms,
         images=tuple(images),
+        files=tuple(files),
     )
 
 
