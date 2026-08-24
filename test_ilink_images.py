@@ -128,7 +128,16 @@ class ILinkImageTests(unittest.TestCase):
             lambda: [{"role": "system", "content": "system"}]
         )
         engine.memory_lock = threading.RLock()
-        engine.tools = []
+        engine.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "fake_weather_tool",
+                    "description": "测试工具不应进入视觉请求",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
         engine.tool_callers = {}
         engine.active_user_id = ""
 
@@ -140,6 +149,8 @@ class ILinkImageTests(unittest.TestCase):
 
         self.assertEqual(answer, "图中是一只猫。")
         self.assertEqual(create.call_args.kwargs["model"], engine.vision_model)
+        self.assertNotIn("tools", create.call_args.kwargs)
+        self.assertNotIn("tool_choice", create.call_args.kwargs)
         request_text = str(create.call_args.kwargs["messages"])
         self.assertIn("data:image/jpeg;base64", request_text)
         memory_text = str(engine.memories["owner"])

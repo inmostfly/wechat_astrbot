@@ -270,7 +270,11 @@ class ReplyEngine:
                 }
             )
         transient_messages = [*memory, {"role": "user", "content": content}]
-        answer = self._complete(transient_messages, self.vision_model)
+        answer = self._complete(
+            transient_messages,
+            self.vision_model,
+            use_tools=False,
+        )
 
         history_text = text.strip() or f"[用户发送了{len(images)}张图片并请求识别]"
         memory.append({"role": "user", "content": history_text})
@@ -278,9 +282,15 @@ class ReplyEngine:
         self._trim(memory)
         return answer
 
-    def _complete(self, messages: list[dict[str, Any]], model: str) -> str:
+    def _complete(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        *,
+        use_tools: bool = True,
+    ) -> str:
         request_options: dict[str, Any] = {}
-        if self.tools:
+        if use_tools and self.tools:
             request_options.update(tools=self.tools, tool_choice="auto")
 
         for _ in range(8):
