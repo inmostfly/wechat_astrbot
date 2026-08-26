@@ -219,9 +219,18 @@ class ReplyEngine:
             self.chat_log.error(f"{label}暂不可用，继续其他功能：{error}")
 
     def _trim(self, memory: list[dict[str, Any]]) -> None:
-        if len(memory) <= self.max_history + 1:
+        """Keep only stable conversational messages in long-term memory."""
+
+        if not memory:
             return
-        memory[1:] = memory[-self.max_history :]
+        system_message = memory[0]
+        stable_messages = [
+            message
+            for message in memory[1:]
+            if message.get("role") in {"user", "assistant"}
+            and not message.get("tool_calls")
+        ]
+        memory[:] = [system_message, *stable_messages[-self.max_history :]]
 
     def reply(
         self,
@@ -261,9 +270,12 @@ class ReplyEngine:
             text = self._document_request_text(text, documents)
         if images:
             return self._reply_with_images(memory, text, images)
-        memory.append({"role": "user", "content": text})
+        user_message = {"role": "user", "content": text}
+        answer = self._complete([*memory, user_message], self.model)
+        memory.append(user_message)
+        memory.append({"role": "assistant", "content": answer})
         self._trim(memory)
-        return self._complete(memory, self.model)
+        return answer
 
     @staticmethod
     def _document_request_text(
@@ -337,6 +349,9 @@ class ReplyEngine:
         *,
         use_tools: bool = True,
     ) -> str:
+        # Tool-call protocol messages belong only to this request.  Keeping them
+        # out of long-term memory prevents trimming from orphaning tool results.
+        request_messages = [*messages]
         request_options: dict[str, Any] = {}
         if use_tools and self.tools:
             request_options.update(tools=self.tools, tool_choice="auto")
@@ -344,13 +359,12 @@ class ReplyEngine:
         for _ in range(8):
             response = self.client.chat.completions.create(
                 model=model,
-                messages=messages,
+                messages=request_messages,
                 **request_options,
             )
             message = response.choices[0].message
-            messages.append(message.model_dump(exclude_none=True))
+            request_messages.append(message.model_dump(exclude_none=True))
             if not message.tool_calls:
-                self._trim(messages)
                 return message.content or "我暂时没有想到合适的回答。"
 
             for tool_call in message.tool_calls:
@@ -365,7 +379,7 @@ class ReplyEngine:
                 except Exception as error:
                     result = json.dumps({"error": str(error)}, ensure_ascii=False)
                 self.chat_log.tool(name, raw_arguments, result)
-                messages.append(
+                request_messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
