@@ -75,6 +75,7 @@ CREATE TABLE reminders (
     run_at REAL NOT NULL,
     timezone TEXT NOT NULL,
     repeat_kind TEXT NOT NULL DEFAULT 'once',
+    schedule_args TEXT NOT NULL DEFAULT '{}',
     action_kind TEXT NOT NULL DEFAULT 'message',
     action_args TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'pending',
@@ -94,6 +95,14 @@ CREATE TABLE reminders (
 ```
 
 天气数据不会提前写进数据库。调度器到点后才读取这些参数并调用天气 MCP，所以每日任务发送的是当时的新数据。
+
+`repeat_kind` 可取 `once`、`daily` 或 `weekly`。每周任务在 `schedule_args` 保存 ISO 星期编号，例如周一和周五：
+
+```json
+{"weekdays": [1, 5]}
+```
+
+这里 1 代表周一，7 代表周日。任务每次发送成功后，Python 会按配置时区寻找下一个被选中的星期，并保持原来的时、分不变。
 
 任务状态：
 
@@ -255,8 +264,8 @@ text = random.choice(checkin_messages)
 | 工具 | 作用 |
 | --- | --- |
 | `get_current_time` | 获取服务器当前时间与配置时区 |
-| `create_reminder` | 创建单次或每日提醒 |
-| `create_weather_schedule` | 创建到点后自动查询和风天气的单次/每日任务 |
+| `create_reminder` | 创建单次、每日或每周指定星期提醒 |
+| `create_weather_schedule` | 创建到点后自动查询和风天气的单次/每日/每周任务 |
 | `list_reminders` | 查看尚未结束的任务 |
 | `cancel_reminder` | 按编号取消任务 |
 
@@ -266,6 +275,7 @@ text = random.choice(checkin_messages)
 10分钟后提醒我起来走走
 今晚22点提醒我关电脑
 每天早上8点把邓州最新天气发给我
+每周一和周五20点30分提醒我提交周报
 查看我的提醒
 取消提醒3
 ```
@@ -276,7 +286,9 @@ text = random.choice(checkin_messages)
 2026-08-16T22:00:00+08:00
 ```
 
-每日任务也可以直接传 `08:00`。定时天气必须使用 `create_weather_schedule`；如果错误地使用普通 `create_reminder`，它只会发送固定文字，无法得到最新天气。
+每日任务也可以直接传 `08:00`。每周任务传 `repeat=weekly`、`run_at=20:30` 和 `weekdays=[1,5]`；每周任务不接受 `delay_minutes`，因为延迟分钟数无法表达固定星期。定时天气必须使用 `create_weather_schedule`；如果错误地使用普通 `create_reminder`，它只会发送固定文字，无法得到最新天气。
+
+旧版数据库的 `repeat_kind` 带有只允许 `once/daily` 的 SQLite `CHECK` 约束，而 SQLite 不能直接修改已有约束。启动时程序会在一个事务里新建支持 `weekly` 的表、复制原记录、替换旧表并重建索引；随后才接收每周任务。迁移测试同时验证旧任务不会丢失。
 
 ### 8.1 “查看我的任务”为什么能知道数据库内容
 
@@ -362,4 +374,4 @@ CHECKIN_AFTER_HOURS=23
 python -m unittest -v test_reminders.py
 ```
 
-测试覆盖数据库持久化、旧表自动迁移、创建/查询/取消、任务列表展示字段、到期发送、随机提醒开场白、到点消息上下文、到点调用天气、发送计数、24小时窗口、额度耗尽、每日续排、主动问候只发一次和 `ret=-2` 恢复。
+测试覆盖数据库持久化、旧表自动迁移、创建/查询/取消、任务列表展示字段、到期发送、随机提醒开场白、到点消息上下文、到点调用天气、发送计数、24小时窗口、额度耗尽、每日续排、多个指定星期的每周续排、主动问候只发一次和 `ret=-2` 恢复。

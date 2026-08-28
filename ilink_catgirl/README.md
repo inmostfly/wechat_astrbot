@@ -17,8 +17,10 @@
 - 首次连接默认跳过初始积压消息
 - 复用父项目的大模型配置、聊天人格、聊天日志和和风天气 MCP
 - 支持搜索互联网，以及读取用户给出的公开网页并附带来源网址
-- 使用 SQLite 持久保存单次/每日提醒，后台到期后主动发送
+- 支持通过外置 JSON 配置接入任意 stdio MCP，并以工具白名单限制模型权限
+- 使用 SQLite 持久保存单次、每日和每周指定星期提醒，后台到期后主动发送
 - 定时天气任务在触发时调用和风天气 MCP，发送当时的最新实况与预报
+- 使用只读 IMAP MCP 查询邮箱，并把新邮件摘要主动转发到微信
 - 记录微信24小时会话窗口和下发次数，额度不可用时等待重新激活
 - 最后一次聊天约23小时后随机发送一条原创问候，引导用户重新激活会话
 - 主动问候不调用模型 API，但会作为助手消息加入本轮模型上下文
@@ -46,7 +48,7 @@ ilink_catgirl/dist/Catgirl微信机器人/Catgirl微信机器人.exe
 
 成品是 onedir 目录，部署时必须携带整个 `Catgirl微信机器人` 文件夹，不能只复制 EXE；依赖都在同目录 `_internal` 中，目标电脑无需安装 Python。具体配置、扫码、日常使用、迁移和排错步骤见成品目录中的 `EXE使用说明.txt`。
 
-该成品只包含当前 iLink 轻量版、完整 MCP 包、天气/联网 MCP、日志模块以及必需的文本资源，不包含已经放弃的 `UIA/`、`wxauto/`、`pywinauto` 或 `comtypes`。PyInstaller 不能跨系统打包：Windows 构建得到 EXE；Ubuntu 应直接运行 Python，或在 Ubuntu 上执行同一份 spec 生成 Linux 可执行文件。
+该成品只包含当前 iLink 轻量版、完整 MCP 包、天气/联网/文档/邮箱 MCP、日志模块以及必需的文本资源，不包含已经放弃的 `UIA/`、`wxauto/`、`pywinauto` 或 `comtypes`。PyInstaller 不能跨系统打包：Windows 构建得到 EXE；Ubuntu 应直接运行 Python，或在 Ubuntu 上执行同一份 spec 生成 Linux 可执行文件。
 
 程序优先复用父目录 `catgirl/.env`，本目录的 `.env` 只用于覆盖。第一次运行会生成二维码图片 `data/weixin-login.png` 和备用扫码链接；扫码确认后才会开始收发消息。
 
@@ -66,7 +68,11 @@ ILINK_MAX_IMAGE_BYTES=10485760
 
 网页读取默认拒绝内网地址。个人可信环境需要读取内网页面，或 Clash Fake-IP 模式返回 `198.18.0.0/15` 时，可以在父目录 `.env` 或本目录 `.env` 中设置 `WEB_ALLOW_PRIVATE_ADDRESS=true`，然后重启机器人。本目录配置会覆盖父目录；即使开启，程序仍拒绝本机回环、链路本地和已知云元数据地址。
 
-定时提醒不需要额外数据库软件。你可以直接发送“10分钟后提醒我休息”“每天早上8点把邓州最新天气发给我”“查看我的提醒”或“取消提醒3”。普通提醒到点发送保存的文字；天气任务到点后才调用和风天气 MCP，因此每天得到的是最新数据。任务保存在 `data/reminders.sqlite3`，服务器重启后仍在。主动下发受微信限制：最近24小时内必须由用户主动发过消息，并且下发次数不能超过当前额度。
+定时提醒不需要额外数据库软件。你可以直接发送“10分钟后提醒我休息”“每天早上8点把邓州最新天气发给我”“每周一和周五20点30分提醒我交周报”“查看我的提醒”或“取消提醒3”。普通提醒到点发送保存的文字；天气任务到点后才调用和风天气 MCP，因此每天得到的是最新数据。任务保存在 `data/reminders.sqlite3`，服务器重启后仍在。每周任务用 1～7 表示周一～周日，模型会自动转换自然语言；旧数据库启动时会自动升级。主动下发受微信限制：最近24小时内必须由用户主动发过消息，并且下发次数不能超过当前额度。
+
+通用 MCP 管理器默认读取程序目录的 `mcp_servers.json`。先复制 `mcp_servers.example.json`，再为每个 stdio 服务填写命令、参数和明确的 `allowed_tools`；未在白名单中的工具不会暴露给模型。配置中的 `env` 只填写环境变量名，密钥仍放在 `.env`，不要把密钥原文写入 JSON。某个外部 MCP 启动失败只会禁用该服务，不影响微信、提醒和其他 MCP。
+
+邮箱功能默认关闭。启用 Gmail 应在 `.env` 填写 `EMAIL_MCP_ENABLED=true`、`EMAIL_MONITOR_ENABLED=true`、`EMAIL_IMAP_HOST=imap.gmail.com`、邮箱地址和应用专用密码。不要填写 Google 普通登录密码；若使用 `xoauth2`，访问令牌到期后需要外部刷新。第一次启动只记录当前最高 UID，不转发旧邮件；以后每120秒只读检查一次，不标记已读、不移动、不删除，也不下载超大邮件正文。新邮件通知同样受微信24小时窗口和下发额度限制，暂时不能发送时不会推进 UID 游标。自动通知会作为助手消息加入内存上下文，方便继续问“这封邮件讲了什么”。Ubuntu 只需出站连接 IMAP 993，不需要开放新的公网端口。
 
 主动问候默认开启：机器人在最后一次收到你的消息约23小时后，从 `主动问候语.txt` 使用 `random.choice` 随机抽取一条发送，同一轮会话只发一次。你回复后重新开始计时。问候不消耗模型 API，但会写入内存中的助手上下文，因此模型能理解你是在回答哪一句。开关和时间位于父目录 `.env` 或本目录 `.env`：`CHECKIN_ENABLED=true`、`CHECKIN_AFTER_HOURS=23`，本目录配置优先。当前话术遵循根目录 `聊天助手.txt` 的安洁莉娜信使助理人设：明亮、可靠、不过度撒娇，每条最多使用一个轻度意象；具体句子均为原创，可直接增删。
 
@@ -84,6 +90,9 @@ ilink_catgirl/
 ├─ bot.py                  # 模型、天气 MCP、消息循环和安全退出
 ├─ weixin_ilink.py         # iLink 登录、长轮询、媒体解密、发送和状态持久化
 ├─ reminders.py            # SQLite 提醒工具、资格计数和后台调度器
+├─ generic_mcp_manager.py  # 外部 stdio MCP 配置、白名单、超时与隔离
+├─ email_watcher.py        # 新邮件轮询、微信资格检查和主动通知
+├─ mcp_servers.example.json# 通用 MCP 配置模板
 ├─ 主动问候语.txt          # 每行一条候选问候，启动时读取并随机选择
 ├─ 定时提醒开场白.txt      # 到点提醒的随机开场白，不调用模型 API
 ├─ requirements.txt        # 独立的轻量依赖
@@ -96,7 +105,9 @@ ilink_catgirl/
 
 项目根目录：
 ├─ document_mcp_client.py  # 微信机器人到文档 MCP 的同步桥接
-└─ document_mcp_server.py  # PDF/Office/纯文本文档内容提取
+├─ document_mcp_server.py  # PDF/Office/纯文本文档内容提取
+├─ email_mcp_client.py     # 微信机器人到只读邮箱 MCP 的同步桥接
+└─ email_mcp_server.py     # Gmail/QQ/163/企业邮箱通用 IMAP 读取
 ```
 
 完整原理、配置、限制和服务器部署说明见 [独立机器人轻量客户端技术文档.md](独立机器人轻量客户端技术文档.md)。SQLite 入门和提醒实现细节见 [SQLite定时提醒技术文档.md](SQLite定时提醒技术文档.md)。
@@ -109,5 +120,6 @@ ilink_catgirl/
 - 网页读取只支持 HTTP/HTTPS 文本页面；默认拒绝内网 IP，开启 `WEB_ALLOW_PRIVATE_ADDRESS` 后可访问可信内网和 Clash Fake-IP，但仍拒绝 localhost、云服务器元数据地址、超大响应和非文本文件。
 - 网页读取不执行 JavaScript，也不读取登录后内容；网页中的 PDF、图片和视频仍不解析，这与微信入站图片识别是两条独立链路。
 - 文档解析不会执行宏、脚本或文档内指令。超大文件、加密 PDF、扫描版 PDF 和旧式二进制 Office 格式会明确拒绝或提示转换。
+- 邮件 MCP 只读访问配置的文件夹；邮件正文属于不可信外部内容，不会自动执行其中的链接、脚本或提示词。邮箱密码、OAuth 令牌和 UID 游标均不得提交到 Git。
 - 腾讯 iLink 当前存在重复发送完全相同文件时 CDN 去重密钥偶尔不匹配的已知上游问题；发生时程序会记录 AES 解密失败并继续运行。
 - 腾讯可能更新协议。若未来失效，应先对照官方仓库的 `README.zh_CN.md`、`src/auth/login-qr.ts`、`src/api/api.ts` 和 `src/api/types.ts`。

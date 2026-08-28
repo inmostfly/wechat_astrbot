@@ -36,8 +36,10 @@ Catgirl微信机器人\
 
 4. 天气查询还需要填写 QWEATHER_API_KEY 和 QWEATHER_API_HOST。
 5. 联网搜索可填写 TAVILY_API_KEY，或者填写自建的 SEARXNG_URL。
-6. 双击 Catgirl微信机器人.exe。第一次运行会生成 data\weixin-login.png，并在控制台显示备用扫码链接。
-7. 使用手机微信扫码并确认。成功后登录状态保存在 data\session.json，下次通常无需重新扫码。
+6. 需要邮箱查询或新邮件通知时，参照 .env.example 填写 EMAIL_IMAP_*。Gmail 的 password 模式必须使用应用专用密码，不能使用普通 Google 密码；保持 EMAIL_MONITOR_ENABLED=false 即不会自动监听。
+7. 需要接入其他 stdio MCP 时，复制 mcp_servers.example.json 为 mcp_servers.json，并只把允许模型使用的工具写进 allowed_tools。
+8. 双击 Catgirl微信机器人.exe。第一次运行会生成 data\weixin-login.png，并在控制台显示备用扫码链接。
+9. 使用手机微信扫码并确认。成功后登录状态保存在 data\session.json，下次通常无需重新扫码。
 
 注意：.env 和 data\session.json 都含敏感信息，不能上传到公开仓库或发送给他人。
 
@@ -52,7 +54,8 @@ Catgirl微信机器人\
 - 图片识别：直接发送 JPEG、PNG、GIF 或 WebP 图片。
 - 文档阅读：直接发送 PDF、DOCX、XLSX、XLSM、PPTX、TXT、Markdown、CSV、JSON、XML、YAML、HTML 等文件。
 - 文档追问：文件得到首次摘要后，可继续问“第三章讲了什么”“表格里最高分是谁”等问题。
-- 提醒：例如“10分钟后提醒我休息”“每天7点30分发送邓州天气”。
+- 提醒：例如“10分钟后提醒我休息”“每天7点30分发送邓州天气”“每周一和周五20点30分提醒我交周报”。
+- 邮箱：启用邮箱 MCP 后可问“查看最近邮件”；启用监听后，新邮件摘要会在微信主动下发额度可用时自动送达。
 
 扫描版 PDF 如果没有文字层，目前不能自动 OCR。旧式 .doc、.xls、.ppt 应先转换为 .docx、.xlsx、.pptx。
 
@@ -76,6 +79,7 @@ stop
 
 - data\session.json：微信登录状态、消息游标和去重信息。
 - data\reminders.sqlite3：提醒任务数据库。
+- data\email_cursor.json：最后成功通知的邮件 UID，用于重启去重。
 - logs\chat_日期_时间.log：本次聊天与工具调用日志。
 - logs\crash_日期_时间.log：未处理致命错误的完整堆栈。
 
