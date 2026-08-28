@@ -17,6 +17,7 @@ if str(ILINK_DIR) not in sys.path:
 import main as ilink_main
 import bot
 import document_mcp_client
+import email_mcp_client
 import weather_mcp_client
 import web_mcp_client
 
@@ -82,6 +83,14 @@ class ILinkPackagingTests(unittest.TestCase):
                 self.assertTrue(ilink_main.run_internal_server())
         runner.assert_called_once_with()
 
+    def test_internal_email_server_is_dispatched(self) -> None:
+        runner = mock.Mock()
+        fake_module = SimpleNamespace(run_server=runner)
+        with mock.patch.object(sys, "argv", ["catgirl.exe", "--email-mcp-server"]):
+            with mock.patch.dict(sys.modules, {"email_mcp_server": fake_module}):
+                self.assertTrue(ilink_main.run_internal_server())
+        runner.assert_called_once_with()
+
     def test_frozen_clients_restart_same_executable_as_mcp_server(self) -> None:
         executable = str(PROJECT_DIR / "Catgirl微信机器人.exe")
         with mock.patch.object(sys, "frozen", True, create=True):
@@ -89,12 +98,15 @@ class ILinkPackagingTests(unittest.TestCase):
                 weather = weather_mcp_client.server_parameters()
                 web = web_mcp_client.server_parameters()
                 document = document_mcp_client.server_parameters()
+                email = email_mcp_client.server_parameters()
         self.assertEqual(weather.command, executable)
         self.assertEqual(weather.args, ["--weather-mcp-server"])
         self.assertEqual(web.command, executable)
         self.assertEqual(web.args, ["--web-mcp-server"])
         self.assertEqual(document.command, executable)
         self.assertEqual(document.args, ["--document-mcp-server"])
+        self.assertEqual(email.command, executable)
+        self.assertEqual(email.args, ["--email-mcp-server"])
 
     def test_lightweight_spec_does_not_include_abandoned_uia(self) -> None:
         spec = (ILINK_DIR / "ilink_catgirl.spec").read_text(encoding="utf-8")
@@ -105,6 +117,7 @@ class ILinkPackagingTests(unittest.TestCase):
         self.assertIn('"weather_mcp_server"', spec)
         self.assertIn('"web_mcp_server"', spec)
         self.assertIn('"document_mcp_server"', spec)
+        self.assertIn('"email_mcp_server"', spec)
         self.assertIn('"mcp_servers.example.json"', spec)
 
     def test_vision_model_and_crypto_dependency_are_packaged(self) -> None:

@@ -66,6 +66,11 @@ def run_internal_server() -> bool:
 
         run_server()
         return True
+    if "--email-mcp-server" in arguments:
+        from email_mcp_server import run_server
+
+        run_server()
+        return True
     return False
 
 
@@ -77,6 +82,7 @@ def main() -> int:
             "--weather-mcp-server",
             "--web-mcp-server",
             "--document-mcp-server",
+            "--email-mcp-server",
         }
         for argument in sys.argv[1:]
     )

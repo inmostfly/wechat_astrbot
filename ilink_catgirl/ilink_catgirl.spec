@@ -34,6 +34,8 @@ a = Analysis(
         "web_mcp_server",
         "document_mcp_client",
         "document_mcp_server",
+        "email_mcp_client",
+        "email_mcp_server",
         "pypdf",
         "docx",
         "openpyxl",
