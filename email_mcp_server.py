@@ -257,6 +257,16 @@ def _search_uids(connection: imaplib.IMAP4_SSL, criterion: str) -> list[int]:
 
 
 def _mailbox_highest_uid(connection: imaplib.IMAP4_SSL, folder: str) -> int:
+    _, selected_data = connection.response("UIDNEXT")
+    selected_raw = b" ".join(
+        item for item in (selected_data or []) if isinstance(item, bytes)
+    ).decode("ascii", errors="ignore")
+    selected_match = re.search(r"(?:UIDNEXT\s+)?(\d+)", selected_raw, flags=re.IGNORECASE)
+    if selected_match:
+        return max(0, int(selected_match.group(1)) - 1)
+
+    # Some IMAP servers do not expose SELECT's UIDNEXT via response().
+    # STATUS remains a portable fallback for those implementations.
     status, data = connection.status(folder, "(UIDNEXT)")
     _response_ok(status, "读取邮箱状态")
     raw = b" ".join(item for item in data if isinstance(item, bytes)).decode(

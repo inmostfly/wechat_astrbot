@@ -2,11 +2,78 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import sys
+import types
+from types import SimpleNamespace
 from unittest import mock
 import unittest
 
-from email_mcp_server import EmailConfig, EmailToolError, parse_email_message
+
+if importlib.util.find_spec("mcp") is None:
+    mcp_module = types.ModuleType("mcp")
+    mcp_client_module = types.ModuleType("mcp.client")
+    mcp_stdio_module = types.ModuleType("mcp.client.stdio")
+    mcp_server_module = types.ModuleType("mcp.server")
+    mcp_fastmcp_module = types.ModuleType("mcp.server.fastmcp")
+
+    class _DummyServerParameters:
+        def __init__(self, **values: object) -> None:
+            self.__dict__.update(values)
+
+    class _DummyFastMCP:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def tool(self):
+            return lambda function: function
+
+    mcp_module.ClientSession = object
+    mcp_module.StdioServerParameters = _DummyServerParameters
+    mcp_stdio_module.stdio_client = lambda *args, **kwargs: None
+    mcp_fastmcp_module.FastMCP = _DummyFastMCP
+    sys.modules.update(
+        {
+            "mcp": mcp_module,
+            "mcp.client": mcp_client_module,
+            "mcp.client.stdio": mcp_stdio_module,
+            "mcp.server": mcp_server_module,
+            "mcp.server.fastmcp": mcp_fastmcp_module,
+        }
+    )
+
+import email_mcp_client
+from email_mcp_server import (
+    EmailConfig,
+    EmailToolError,
+    _mailbox_highest_uid,
+    parse_email_message,
+)
+
+
+class _AsyncContext:
+    def __init__(self, value: object) -> None:
+        self.value = value
+        self.saw_exception = False
+
+    async def __aenter__(self) -> object:
+        return self.value
+
+    async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+        self.saw_exception = exc_type is not None
+        return False
+
+
+class _FakeSession:
+    def __init__(self, result: object) -> None:
+        self.result = result
+
+    async def initialize(self) -> None:
+        return None
+
+    async def call_tool(self, name: str, arguments: dict[str, object]) -> object:
+        return self.result
 
 
 class EmailMCPTests(unittest.TestCase):
@@ -63,6 +130,57 @@ class EmailMCPTests(unittest.TestCase):
             with self.assertRaises(EmailToolError) as context:
                 EmailConfig.from_environment()
         self.assertIn("EMAIL_IMAP_PASSWORD", str(context.exception))
+
+    def test_selected_mailbox_uidnext_is_preferred(self) -> None:
+        connection = mock.Mock()
+        connection.response.return_value = ("UIDNEXT", [b"73"])
+
+        self.assertEqual(_mailbox_highest_uid(connection, "INBOX"), 72)
+        connection.status.assert_not_called()
+
+    def test_mailbox_status_is_used_when_selected_uidnext_is_missing(self) -> None:
+        connection = mock.Mock()
+        connection.response.return_value = (None, [None])
+        connection.status.return_value = ("OK", [b'"INBOX" (UIDNEXT 19)'])
+
+        self.assertEqual(_mailbox_highest_uid(connection, "INBOX"), 18)
+
+    def test_tool_error_is_raised_after_async_contexts_close(self) -> None:
+        result = SimpleNamespace(
+            isError=True,
+            content=[SimpleNamespace(text="连接邮箱失败：测试错误")],
+        )
+        transport = _AsyncContext((object(), object()))
+        session_context = _AsyncContext(_FakeSession(result))
+
+        with (
+            mock.patch.object(email_mcp_client, "stdio_client", return_value=transport),
+            mock.patch.object(
+                email_mcp_client,
+                "ClientSession",
+                return_value=session_context,
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "连接邮箱失败：测试错误"):
+                email_mcp_client.call_email_tool("mailbox_status", {})
+
+        self.assertFalse(session_context.saw_exception)
+        self.assertFalse(transport.saw_exception)
+
+    def test_exception_group_detail_is_flattened_and_secret_is_redacted(self) -> None:
+        grouped = ExceptionGroup(
+            "outer",
+            [RuntimeError("TLS 失败"), ExceptionGroup("inner", [OSError("连接重置")])],
+        )
+        self.assertEqual(
+            email_mcp_client._exception_detail(grouped),
+            "TLS 失败；连接重置",
+        )
+        with mock.patch.dict(os.environ, {"EMAIL_IMAP_PASSWORD": "example-secret"}):
+            self.assertEqual(
+                email_mcp_client._redact_secrets("登录失败 example-secret"),
+                "登录失败 ***",
+            )
 
 
 if __name__ == "__main__":
