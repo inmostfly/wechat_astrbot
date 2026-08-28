@@ -17,6 +17,8 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from generic_mcp_manager import GenericMCPManager
+
 from reminders import (
     ReminderScheduler,
     ReminderStore,
@@ -140,6 +142,14 @@ def load_document_components():
     return extract_document, list_document_tools
 
 
+def generic_mcp_config_path() -> Path:
+    configured = os.getenv("ILINK_MCP_CONFIG", "").strip()
+    if not configured:
+        return PROJECT_DIR / "mcp_servers.json"
+    path = Path(configured)
+    return path if path.is_absolute() else PROJECT_DIR / path
+
+
 class ReplyEngine:
     def __init__(self, chat_log: Any, reminder_tools: ReminderTools) -> None:
         api_key = os.getenv("API_KEY_2", "").strip()
@@ -197,6 +207,15 @@ class ReplyEngine:
             list_reminder_tools,
             self._call_reminder_tool,
         )
+        self.generic_mcp_manager = GenericMCPManager(
+            generic_mcp_config_path(), self.chat_log
+        )
+        if self.generic_mcp_manager.config_path.is_file():
+            self._register_tool_group(
+                "通用外部 MCP",
+                self.generic_mcp_manager.list_tools,
+                self.generic_mcp_manager.call_tool,
+            )
 
     def _call_reminder_tool(self, name: str, arguments: dict[str, Any]) -> str:
         if not self.active_user_id:

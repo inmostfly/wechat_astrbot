@@ -31,6 +31,7 @@ pip-wheel-metadata/
 *.p12
 *.pfx
 secrets.*
+mcp_servers.json
 
 # Logs
 *.log

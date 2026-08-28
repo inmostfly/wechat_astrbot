@@ -46,6 +46,7 @@ class ILinkPackagingTests(unittest.TestCase):
         self.assertIn("用户自定义", guide)
         self.assertIn("退出并重新启动 EXE", guide)
         self.assertIn('copy /Y "EXE使用说明.txt"', build_script)
+        self.assertIn('copy /Y "mcp_servers.example.json"', build_script)
 
     def test_editable_resources_are_preferred_and_packaged_separately(self) -> None:
         editable = bot.PROJECT_DIR / "用户自定义" / "聊天助手.txt"
@@ -104,6 +105,7 @@ class ILinkPackagingTests(unittest.TestCase):
         self.assertIn('"weather_mcp_server"', spec)
         self.assertIn('"web_mcp_server"', spec)
         self.assertIn('"document_mcp_server"', spec)
+        self.assertIn('"mcp_servers.example.json"', spec)
 
     def test_vision_model_and_crypto_dependency_are_packaged(self) -> None:
         environment = (ILINK_DIR / ".env.example").read_text(encoding="utf-8")

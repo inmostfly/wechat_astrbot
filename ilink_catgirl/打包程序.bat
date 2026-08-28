@@ -34,6 +34,7 @@ copy /Y "SQLite定时提醒技术文档.md" "%CATGIRL_OUTPUT%\SQLite定时提醒
 copy /Y "独立机器人轻量客户端技术文档.md" "%CATGIRL_OUTPUT%\独立机器人轻量客户端技术文档.md" >nul
 copy /Y "THIRD_PARTY_NOTICES.md" "%CATGIRL_OUTPUT%\THIRD_PARTY_NOTICES.md" >nul
 copy /Y "EXE使用说明.txt" "%CATGIRL_OUTPUT%\EXE使用说明.txt" >nul
+copy /Y "mcp_servers.example.json" "%CATGIRL_OUTPUT%\mcp_servers.example.json" >nul
 
 if exist ".env" (
     copy /Y ".env" "%CATGIRL_OUTPUT%\.env" >nul

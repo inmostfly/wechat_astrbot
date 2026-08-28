@@ -22,6 +22,7 @@ a = Analysis(
         (str(PROJECT_ROOT / "聊天助手.txt"), "."),
         (str(ILINK_DIR / "主动问候语.txt"), "."),
         (str(ILINK_DIR / "定时提醒开场白.txt"), "."),
+        (str(ILINK_DIR / "mcp_servers.example.json"), "."),
     ],
     hiddenimports=[
         *mcp_hiddenimports,

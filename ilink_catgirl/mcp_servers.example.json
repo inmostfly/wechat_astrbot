@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "example": {
+      "enabled": false,
+      "command": "python",
+      "args": ["path/to/server.py"],
+      "cwd": ".",
+      "env": {
+        "THIRD_PARTY_API_KEY": "MY_MCP_API_KEY"
+      },
+      "allowed_tools": ["search", "read"],
+      "name_prefix": "example",
+      "timeout_seconds": 30,
+      "max_result_chars": 30000
+    }
+  }
+}
