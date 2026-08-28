@@ -18,6 +18,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 UTC = timezone.utc
 ACTIVE_STATUSES = ("pending", "waiting_reactivation", "sending", "failed")
+WEEKDAY_LABELS = {
+    1: "周一",
+    2: "周二",
+    3: "周三",
+    4: "周四",
+    5: "周五",
+    6: "周六",
+    7: "周日",
+}
 
 
 def _now_timestamp() -> float:
@@ -42,6 +51,58 @@ def _next_daily_timestamp(previous: float, now: float, timezone_name: str) -> fl
     while candidate.timestamp() <= now:
         candidate += timedelta(days=1)
     return candidate.timestamp()
+
+
+def _normalize_weekdays(values: Any) -> list[int]:
+    if not isinstance(values, list) or not values:
+        raise ValueError("每周提醒必须提供 weekdays，例如 [1, 3, 5]；1代表周一，7代表周日")
+    try:
+        weekdays = sorted({int(value) for value in values})
+    except (TypeError, ValueError) as error:
+        raise ValueError("weekdays 必须是1到7组成的数组") from error
+    if any(value < 1 or value > 7 for value in weekdays):
+        raise ValueError("weekdays 只允许1到7；1代表周一，7代表周日")
+    return weekdays
+
+
+def _next_weekly_datetime(
+    now: datetime,
+    weekdays: list[int],
+    hour: int,
+    minute: int,
+) -> datetime:
+    for offset in range(8):
+        candidate = (now + timedelta(days=offset)).replace(
+            hour=hour,
+            minute=minute,
+            second=0,
+            microsecond=0,
+        )
+        if candidate.isoweekday() in weekdays and candidate > now:
+            return candidate
+    raise ValueError("无法计算下一次每周提醒时间")
+
+
+def _next_weekly_timestamp(
+    previous: float,
+    now: float,
+    timezone_name: str,
+    schedule_args: str,
+) -> float:
+    zone = _timezone(timezone_name)
+    previous_local = datetime.fromtimestamp(previous, UTC).astimezone(zone)
+    now_local = datetime.fromtimestamp(now, UTC).astimezone(zone)
+    try:
+        arguments = json.loads(schedule_args or "{}")
+    except json.JSONDecodeError as error:
+        raise ValueError("每周提醒的调度参数损坏") from error
+    weekdays = _normalize_weekdays(arguments.get("weekdays"))
+    return _next_weekly_datetime(
+        now_local,
+        weekdays,
+        previous_local.hour,
+        previous_local.minute,
+    ).timestamp()
 
 
 class ReminderStore:
@@ -90,7 +151,8 @@ class ReminderStore:
                     run_at REAL NOT NULL,
                     timezone TEXT NOT NULL,
                     repeat_kind TEXT NOT NULL DEFAULT 'once'
-                        CHECK (repeat_kind IN ('once', 'daily')),
+                        CHECK (repeat_kind IN ('once', 'daily', 'weekly')),
+                    schedule_args TEXT NOT NULL DEFAULT '{}',
                     action_kind TEXT NOT NULL DEFAULT 'message'
                         CHECK (action_kind IN ('message', 'weather')),
                     action_args TEXT NOT NULL DEFAULT '{}',
@@ -123,6 +185,16 @@ class ReminderStore:
                 connection.execute(
                     "ALTER TABLE reminders ADD COLUMN action_args TEXT NOT NULL DEFAULT '{}'"
                 )
+            if "schedule_args" not in columns:
+                connection.execute(
+                    "ALTER TABLE reminders ADD COLUMN schedule_args TEXT NOT NULL DEFAULT '{}'"
+                )
+            table_sql_row = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reminders'"
+            ).fetchone()
+            table_sql = str(table_sql_row["sql"] or "") if table_sql_row else ""
+            if "'weekly'" not in table_sql:
+                self._upgrade_reminders_for_weekly(connection)
             recipient_columns = {
                 str(row["name"])
                 for row in connection.execute("PRAGMA table_info(recipients)")
@@ -143,6 +215,56 @@ class ReminderStore:
             self.path.chmod(0o600)
         except OSError:
             pass
+
+    @staticmethod
+    def _upgrade_reminders_for_weekly(connection: sqlite3.Connection) -> None:
+        """Rebuild the table because SQLite cannot alter an existing CHECK constraint."""
+
+        connection.executescript(
+            """
+            DROP INDEX IF EXISTS idx_reminders_due;
+            DROP INDEX IF EXISTS idx_reminders_user;
+            ALTER TABLE reminders RENAME TO reminders_before_weekly;
+
+            CREATE TABLE reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                run_at REAL NOT NULL,
+                timezone TEXT NOT NULL,
+                repeat_kind TEXT NOT NULL DEFAULT 'once'
+                    CHECK (repeat_kind IN ('once', 'daily', 'weekly')),
+                schedule_args TEXT NOT NULL DEFAULT '{}',
+                action_kind TEXT NOT NULL DEFAULT 'message'
+                    CHECK (action_kind IN ('message', 'weather')),
+                action_args TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN (
+                        'pending', 'sending', 'waiting_reactivation',
+                        'sent', 'cancelled', 'failed'
+                    )),
+                created_at REAL NOT NULL,
+                sent_at REAL,
+                last_error TEXT,
+                FOREIGN KEY (user_id) REFERENCES recipients(user_id)
+            );
+
+            INSERT INTO reminders (
+                id, user_id, content, run_at, timezone, repeat_kind,
+                schedule_args, action_kind, action_args, status,
+                created_at, sent_at, last_error
+            )
+            SELECT
+                id, user_id, content, run_at, timezone, repeat_kind,
+                schedule_args, action_kind, action_args, status,
+                created_at, sent_at, last_error
+            FROM reminders_before_weekly;
+
+            DROP TABLE reminders_before_weekly;
+            CREATE INDEX idx_reminders_due ON reminders(status, run_at);
+            CREATE INDEX idx_reminders_user ON reminders(user_id, status, run_at);
+            """
+        )
 
     def record_inbound(
         self,
@@ -239,18 +361,20 @@ class ReminderStore:
         *,
         timezone_name: str,
         repeat_kind: str,
+        schedule_args: dict[str, Any] | None = None,
         action_kind: str = "message",
         action_args: dict[str, Any] | None = None,
     ) -> int:
         now = _now_timestamp()
         serialized_args = json.dumps(action_args or {}, ensure_ascii=False)
+        serialized_schedule = json.dumps(schedule_args or {}, ensure_ascii=False)
         with self._lock, self._connection() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO reminders (
                     user_id, content, run_at, timezone, repeat_kind,
-                    action_kind, action_args, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                    schedule_args, action_kind, action_args, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
                 """,
                 (
                     user_id,
@@ -258,6 +382,7 @@ class ReminderStore:
                     run_at,
                     timezone_name,
                     repeat_kind,
+                    serialized_schedule,
                     action_kind,
                     serialized_args,
                     now,
@@ -369,6 +494,21 @@ class ReminderStore:
                         """,
                         (next_run, sent_at, reminder_id),
                     )
+                elif reminder["repeat_kind"] == "weekly":
+                    next_run = _next_weekly_timestamp(
+                        float(reminder["run_at"]),
+                        sent_at,
+                        str(reminder["timezone"]),
+                        str(reminder.get("schedule_args") or "{}"),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE reminders
+                        SET status = 'pending', run_at = ?, sent_at = ?, last_error = NULL
+                        WHERE id = ?
+                        """,
+                        (next_run, sent_at, reminder_id),
+                    )
                 else:
                     connection.execute(
                         """
@@ -407,8 +547,9 @@ def list_reminder_tools() -> list[dict[str, Any]]:
             "function": {
                 "name": "create_reminder",
                 "description": (
-                    "创建单次或每日提醒。相对时间优先传 delay_minutes；绝对时间传带日期的 ISO 8601，"
-                    "每日提醒的 run_at 也可传 HH:MM。触发时只发送保存的文本，不会动态调用天气或联网工具。"
+                    "创建单次、每日或每周指定星期提醒。相对时间优先传 delay_minutes；绝对时间传带日期的 ISO 8601，"
+                    "每日提醒的 run_at 可传 HH:MM；每周提醒传 repeat=weekly、weekdays 和 HH:MM。"
+                    "触发时只发送保存的文本，不会动态调用天气或联网工具。"
                     "不要在未调用工具时声称已经创建。"
                 ),
                 "parameters": {
@@ -417,7 +558,7 @@ def list_reminder_tools() -> list[dict[str, Any]]:
                         "content": {"type": "string", "description": "提醒时发送的内容"},
                         "run_at": {
                             "type": "string",
-                            "description": "绝对时间，如 2026-08-16T22:00:00+08:00；每日可用 08:00",
+                            "description": "绝对时间，如 2026-08-16T22:00:00+08:00；每日或每周可用 08:00",
                         },
                         "delay_minutes": {
                             "type": "number",
@@ -425,8 +566,14 @@ def list_reminder_tools() -> list[dict[str, Any]]:
                         },
                         "repeat": {
                             "type": "string",
-                            "enum": ["once", "daily"],
+                            "enum": ["once", "daily", "weekly"],
                             "default": "once",
+                        },
+                        "weekdays": {
+                            "type": "array",
+                            "items": {"type": "integer", "minimum": 1, "maximum": 7},
+                            "uniqueItems": True,
+                            "description": "每周任务必填；1代表周一，7代表周日，例如周一和周五传 [1, 5]",
                         },
                     },
                     "required": ["content"],
@@ -456,7 +603,7 @@ def list_reminder_tools() -> list[dict[str, Any]]:
                         },
                         "run_at": {
                             "type": "string",
-                            "description": "绝对时间；每日任务可用 HH:MM",
+                            "description": "绝对时间；每日或每周任务可用 HH:MM",
                         },
                         "delay_minutes": {
                             "type": "number",
@@ -464,8 +611,14 @@ def list_reminder_tools() -> list[dict[str, Any]]:
                         },
                         "repeat": {
                             "type": "string",
-                            "enum": ["once", "daily"],
+                            "enum": ["once", "daily", "weekly"],
                             "default": "once",
+                        },
+                        "weekdays": {
+                            "type": "array",
+                            "items": {"type": "integer", "minimum": 1, "maximum": 7},
+                            "uniqueItems": True,
+                            "description": "每周天气任务必填；1代表周一，7代表周日",
                         },
                     },
                     "required": ["location"],
@@ -544,13 +697,14 @@ class ReminderTools:
         if len(content) > 600:
             raise ValueError("单条提醒内容不能超过600个字符")
 
-        repeat_kind, run_at = self._resolve_schedule(arguments)
+        repeat_kind, run_at, schedule_args = self._resolve_schedule(arguments)
         reminder_id = self.store.create_reminder(
             user_id,
             content,
             run_at.timestamp(),
             timezone_name=self.timezone_name,
             repeat_kind=repeat_kind,
+            schedule_args=schedule_args,
         )
         return {
             "ok": True,
@@ -559,6 +713,7 @@ class ReminderTools:
             "content": content,
             "run_at": run_at.isoformat(timespec="seconds"),
             "repeat": repeat_kind,
+            "weekdays": schedule_args.get("weekdays"),
             "note": "实际发送受微信24小时会话窗口和10次下发额度限制",
         }
 
@@ -569,7 +724,7 @@ class ReminderTools:
         if len(location) < 2:
             raise ValueError("天气任务需要至少两个字符的地点名称")
         forecast_days = max(1, min(int(arguments.get("forecast_days") or 3), 7))
-        repeat_kind, run_at = self._resolve_schedule(arguments)
+        repeat_kind, run_at, schedule_args = self._resolve_schedule(arguments)
         content = f"查询{location}天气（未来{forecast_days}天）"
         reminder_id = self.store.create_reminder(
             user_id,
@@ -577,6 +732,7 @@ class ReminderTools:
             run_at.timestamp(),
             timezone_name=self.timezone_name,
             repeat_kind=repeat_kind,
+            schedule_args=schedule_args,
             action_kind="weather",
             action_args={"location": location, "forecast_days": forecast_days},
         )
@@ -588,19 +744,33 @@ class ReminderTools:
             "forecast_days": forecast_days,
             "run_at": run_at.isoformat(timespec="seconds"),
             "repeat": repeat_kind,
+            "weekdays": schedule_args.get("weekdays"),
             "note": "到期时调用和风天气查询，不是发送固定提醒文字",
         }
 
     def _resolve_schedule(
         self, arguments: dict[str, Any]
-    ) -> tuple[str, datetime]:
+    ) -> tuple[str, datetime, dict[str, Any]]:
         repeat_kind = str(arguments.get("repeat") or "once").strip().lower()
-        if repeat_kind not in {"once", "daily"}:
-            raise ValueError("repeat 只允许 once 或 daily")
+        if repeat_kind not in {"once", "daily", "weekly"}:
+            raise ValueError("repeat 只允许 once、daily 或 weekly")
         now = datetime.now(self.zone)
         delay_value = arguments.get("delay_minutes")
         run_at_text = str(arguments.get("run_at") or "").strip()
-        if delay_value is not None:
+        schedule_args: dict[str, Any] = {}
+        if repeat_kind == "weekly":
+            if delay_value is not None:
+                raise ValueError("每周提醒请使用 run_at=HH:MM，不能使用 delay_minutes")
+            weekdays = _normalize_weekdays(arguments.get("weekdays"))
+            if not re.fullmatch(r"\d{1,2}:\d{2}", run_at_text):
+                raise ValueError("每周提醒的 run_at 必须使用 HH:MM")
+            hour_text, minute_text = run_at_text.split(":", 1)
+            hour, minute = int(hour_text), int(minute_text)
+            if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+                raise ValueError("每周提醒时间必须是有效的 HH:MM")
+            run_at = _next_weekly_datetime(now, weekdays, hour, minute)
+            schedule_args = {"weekdays": weekdays}
+        elif delay_value is not None:
             delay_minutes = float(delay_value)
             if delay_minutes <= 0:
                 raise ValueError("delay_minutes 必须大于0")
@@ -632,7 +802,7 @@ class ReminderTools:
             else:
                 raise ValueError("单次提醒时间必须晚于当前时间")
 
-        return repeat_kind, run_at
+        return repeat_kind, run_at, schedule_args
 
     def _list(self, user_id: str) -> dict[str, Any]:
         rows = self.store.list_reminders(user_id)
@@ -641,6 +811,18 @@ class ReminderTools:
             local_time = datetime.fromtimestamp(float(row["run_at"]), UTC).astimezone(
                 _timezone(str(row["timezone"]))
             )
+            schedule_text = local_time.strftime("%Y-%m-%d %H:%M")
+            weekdays: list[int] | None = None
+            if row["repeat_kind"] == "daily":
+                schedule_text = f"每天 {local_time:%H:%M}"
+            elif row["repeat_kind"] == "weekly":
+                try:
+                    schedule_data = json.loads(str(row.get("schedule_args") or "{}"))
+                    weekdays = _normalize_weekdays(schedule_data.get("weekdays"))
+                    labels = "、".join(WEEKDAY_LABELS[value] for value in weekdays)
+                    schedule_text = f"每{labels} {local_time:%H:%M}"
+                except (json.JSONDecodeError, ValueError):
+                    schedule_text = f"每周（调度参数异常）{local_time:%H:%M}"
             reminders.append(
                 {
                     "id": int(row["id"]),
@@ -652,12 +834,9 @@ class ReminderTools:
                         else "日常提醒任务"
                     ),
                     "run_at": local_time.isoformat(timespec="seconds"),
-                    "schedule_text": (
-                        f"每天 {local_time:%H:%M}"
-                        if row["repeat_kind"] == "daily"
-                        else local_time.strftime("%Y-%m-%d %H:%M")
-                    ),
+                    "schedule_text": schedule_text,
                     "repeat": row["repeat_kind"],
+                    "weekdays": weekdays,
                     "status": row["status"],
                 }
             )

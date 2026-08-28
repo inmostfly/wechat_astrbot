@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -126,7 +127,20 @@ class ReminderTests(unittest.TestCase):
             }
         self.assertIn("action_kind", reminder_columns)
         self.assertIn("action_args", reminder_columns)
+        self.assertIn("schedule_args", reminder_columns)
         self.assertIn("last_checkin_at", recipient_columns)
+
+        migrated = ReminderStore(legacy_path)
+        migrated.record_inbound("legacy-user", "token")
+        weekly_id = migrated.create_reminder(
+            "legacy-user",
+            "迁移后每周提醒",
+            time.time() + 60,
+            timezone_name="Asia/Shanghai",
+            repeat_kind="weekly",
+            schedule_args={"weekdays": [1]},
+        )
+        self.assertGreater(weekly_id, 0)
 
     def test_proactive_checkin_is_sent_once_and_added_to_context(self) -> None:
         self.store.record_inbound(
@@ -224,6 +238,54 @@ class ReminderTests(unittest.TestCase):
         self.assertEqual(row["action_kind"], "weather")
         self.assertEqual(json.loads(row["action_args"])["location"], "河南省邓州市")
         self.assertEqual(row["repeat_kind"], "daily")
+
+    def test_weekly_reminder_accepts_multiple_weekdays_and_lists_them(self) -> None:
+        tools = ReminderTools(self.store, timezone_name="Asia/Shanghai")
+        created = json.loads(
+            tools.call(
+                self.user_id,
+                "create_reminder",
+                {
+                    "content": "提交周报",
+                    "run_at": "20:30",
+                    "repeat": "weekly",
+                    "weekdays": [5, 1, 5],
+                },
+            )
+        )
+
+        self.assertTrue(created["ok"])
+        self.assertEqual(created["weekdays"], [1, 5])
+        row = self._reminder_row(created["reminder_id"])
+        self.assertEqual(row["repeat_kind"], "weekly")
+        self.assertEqual(json.loads(row["schedule_args"]), {"weekdays": [1, 5]})
+        listed = json.loads(tools.call(self.user_id, "list_reminders", {}))
+        self.assertEqual(listed["reminders"][0]["schedule_text"], "每周一、周五 20:30")
+
+    def test_weekly_reminder_requires_weekdays_and_hhmm(self) -> None:
+        tools = ReminderTools(self.store, timezone_name="Asia/Shanghai")
+        missing_days = json.loads(
+            tools.call(
+                self.user_id,
+                "create_reminder",
+                {"content": "测试", "run_at": "08:00", "repeat": "weekly"},
+            )
+        )
+        bad_delay = json.loads(
+            tools.call(
+                self.user_id,
+                "create_reminder",
+                {
+                    "content": "测试",
+                    "delay_minutes": 10,
+                    "repeat": "weekly",
+                    "weekdays": [1],
+                },
+            )
+        )
+
+        self.assertIn("weekdays", missing_days["error"])
+        self.assertIn("不能使用 delay_minutes", bad_delay["error"])
 
     def test_weather_is_queried_when_task_triggers(self) -> None:
         reminder_id = self.store.create_reminder(
@@ -368,6 +430,27 @@ class ReminderTests(unittest.TestCase):
         self.assertEqual(status, "pending")
         self.assertGreater(next_run, time.time())
         self.assertGreaterEqual(next_run - previous_run, 23 * 3600)
+
+    def test_weekly_reminder_moves_to_next_selected_weekday(self) -> None:
+        china = timezone(timedelta(hours=8))
+        previous = datetime(2026, 8, 28, 20, 30, tzinfo=china)  # Friday
+        delivered = datetime(2026, 8, 28, 20, 31, tzinfo=china)
+        reminder_id = self.store.create_reminder(
+            self.user_id,
+            "每周任务",
+            previous.timestamp(),
+            timezone_name="Asia/Shanghai",
+            repeat_kind="weekly",
+            schedule_args={"weekdays": [1, 5]},
+        )
+        due = self.store.claim_due(delivered.timestamp())
+
+        self.store.mark_delivered(due, delivered.timestamp())
+
+        status, next_run, _ = self._status(reminder_id)
+        next_local = datetime.fromtimestamp(next_run, china)
+        self.assertEqual(status, "pending")
+        self.assertEqual(next_local, datetime(2026, 8, 31, 20, 30, tzinfo=china))
 
     def test_ret_minus_two_waits_for_new_inbound(self) -> None:
         reminder_id = self._create_due()
